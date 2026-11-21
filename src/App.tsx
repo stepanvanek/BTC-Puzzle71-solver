@@ -52,7 +52,7 @@ import type {
   PuzzleNetworkInfo,
   SessionData,
 } from './types/api.ts';
-import { detectDeviceLabel, getOrCreateDeviceId } from './utils/deviceId.ts';
+import { detectDeviceLabel, getOrCreateDeviceId, getOrCreateDeviceSecret } from './utils/deviceId.ts';
 import {
   DEFAULT_MAX_SPEED_SAMPLES,
   type SpeedSample,
@@ -106,6 +106,7 @@ export default function App() {
 
   const [locale, setLocale] = useState<Locale>(initialRoute.locale);
   const [deviceId] = useState(() => getOrCreateDeviceId());
+  const [deviceSecret] = useState(() => getOrCreateDeviceSecret());
   const deviceLabel = detectDeviceLabel(locale);
 
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
@@ -406,8 +407,11 @@ export default function App() {
           `/api/sessions/${encodeURIComponent(token)}/blocks/${blockId}/heartbeat`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ deviceId }),
+            headers: {
+              'Content-Type': 'application/json',
+              'x-device-secret': deviceSecret,
+            },
+            body: JSON.stringify({ deviceId, deviceSecret }),
           },
         );
         if (!res.ok) return;
@@ -448,7 +452,7 @@ export default function App() {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [sessionData, currentBlock, isRunning, deviceId, refreshSession]);
+  }, [sessionData, currentBlock, isRunning, deviceId, deviceSecret, refreshSession]);
 
   const handleCreateSession = async (btcAddress: string) => {
     setIsCreatingSession(true);
@@ -503,11 +507,15 @@ export default function App() {
         `/api/sessions/${encodeURIComponent(sessionData.session.shareToken)}/strategy`,
         {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-device-secret': deviceSecret,
+          },
           body: JSON.stringify({
             blockMode,
             startPercent,
             deviceId,
+            deviceSecret,
           }),
         },
       );
@@ -568,9 +576,13 @@ export default function App() {
         `/api/sessions/${encodeURIComponent(shareToken)}/blocks/${blockId}/checkpoint`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-device-secret': deviceSecret,
+          },
           body: JSON.stringify({
             deviceId,
+            deviceSecret,
             progressOffset: offset,
             rateKps,
             powOffsets: batchOffsets,
@@ -824,9 +836,13 @@ export default function App() {
       const measuredRate = lastMeasuredRateRef.current;
       const res = await fetch(`/api/sessions/${encodeURIComponent(token)}/blocks/lease`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-device-secret': deviceSecret,
+        },
         body: JSON.stringify({
           deviceId,
+          deviceSecret,
           deviceLabel,
           computeMode: hardware.mode,
           gpuName: hardware.adapterName,
@@ -873,9 +889,13 @@ export default function App() {
         `/api/sessions/${encodeURIComponent(token)}/blocks/${completedBlock.id}/complete`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-device-secret': deviceSecret,
+          },
           body: JSON.stringify({
             deviceId,
+            deviceSecret,
             rateKps: measuredRate,
             powOffsets: finalOffsets,
           }),

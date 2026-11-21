@@ -1,21 +1,41 @@
 import type { Locale } from '../i18n/locale.ts';
 import { pathnameForTab } from '../i18n/locale.ts';
 
-const DEVICE_ID_KEY = 'puzzle71_device_id_v1';
+const LEGACY_DEVICE_ID_KEY = 'puzzle71_device_id_v1';
+
+let runtimeDeviceId: string | null = null;
+let runtimeDeviceSecret: string | null = null;
+
+function generateRandomHex(byteLength: number): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const buf = new Uint8Array(byteLength);
+    crypto.getRandomValues(buf);
+    return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`.padEnd(
+    byteLength * 2,
+    '0',
+  );
+}
 
 export function getOrCreateDeviceId(): string {
+  if (runtimeDeviceId) return runtimeDeviceId;
   try {
-    const existing = localStorage.getItem(DEVICE_ID_KEY);
-    if (existing && existing.length >= 8) return existing;
-    const generated =
-      typeof crypto !== 'undefined' && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `dev-${Math.random().toString(36).slice(2, 12)}`;
-    localStorage.setItem(DEVICE_ID_KEY, generated);
-    return generated;
+    localStorage.removeItem(LEGACY_DEVICE_ID_KEY);
   } catch {
-    return `dev-${Math.random().toString(36).slice(2, 12)}`;
+    // ignore storage cleanup errors
   }
+  runtimeDeviceId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `dev-${generateRandomHex(12)}`;
+  return runtimeDeviceId;
+}
+
+export function getOrCreateDeviceSecret(): string {
+  if (runtimeDeviceSecret) return runtimeDeviceSecret;
+  runtimeDeviceSecret = generateRandomHex(24);
+  return runtimeDeviceSecret;
 }
 
 export function detectDeviceLabel(locale: Locale = 'en'): string {

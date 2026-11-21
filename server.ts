@@ -6,7 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SITEMAP_TAB_PAIRS, pathnameForTab } from './src/i18n/locale.ts';
 import { validateBitcoinAddress } from './src/shared/btcAddress.ts';
-import { PUZZLE_71_ADDRESS, getRecommendedBatchBlockCount } from './src/shared/puzzle71.ts';
+import { verifySignedPuzzleTx } from './src/shared/btcTx.ts';
+import {
+  ADMIN_PAYOUT_ADDRESS,
+  PUZZLE_71_ADDRESS,
+  PUZZLE_71_HASH160_HEX,
+  getRecommendedBatchBlockCount,
+} from './src/shared/puzzle71.ts';
 import { Puzzle71Store } from './server/db.ts';
 import { broadcastPrivatePoolTransaction, fetchPuzzle71NetworkInfo } from './server/privateRelay.ts';
 
@@ -67,7 +73,36 @@ const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, 'data', 'puzzl
 const store = new Puzzle71Store(DB_PATH);
 
 const app = express();
+const distPathForHeaders = path.join(__dirname, 'dist');
+const isProdEnv = process.env.NODE_ENV === 'production' && fs.existsSync(distPathForHeaders);
+const trustProxySetting =
+  process.env.TRUST_PROXY === '0' || process.env.TRUST_PROXY === 'false' ? false : 1;
+app.set('trust proxy', trustProxySetting);
+app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
+
+// Baseline browser security headers (keeps iframe compatibility for preview while setting nosniff, Referrer-Policy & CSP)
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  const scriptSrc = isProdEnv ? "script-src 'self'" : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      scriptSrc,
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com data:",
+      "img-src 'self' data: blob: https:",
+      "connect-src 'self' https: ws: wss:",
+      "worker-src 'self' blob:",
+    ].join('; '),
+  );
+  next();
+});
 
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
@@ -91,11 +126,17 @@ function checkRateLimit(key: string, maxCount: number, windowMs: number): boolea
 }
 
 function getClientIp(req: express.Request): string {
-  const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.trim()) {
-    return fwd.split(',')[0].trim();
+  return req.ip || req.socket.remoteAddress || 'local';
+}
+
+function extractDeviceSecret(req: express.Request): string | undefined {
+  const headerVal = req.get('x-device-secret');
+  const bodyVal = typeof req.body?.deviceSecret === 'string' ? req.body.deviceSecret : undefined;
+  const candidate = (headerVal ?? bodyVal ?? '').trim();
+  if (candidate.length >= 16 && candidate.length <= 200) {
+    return candidate;
   }
-  return req.socket.remoteAddress || 'local';
+  return undefined;
 }
 
 function parsePowOffsetsBody(raw: unknown): number[] {
@@ -106,19 +147,37 @@ function parsePowOffsetsBody(raw: unknown): number[] {
     .filter((n) => Number.isInteger(n) && n >= 0);
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
+}
+
 // SEO crawlers: robots.txt & sitemap.xml (disallow private ?u= session URLs and /api/ endpoints)
 function resolvePublicBaseUrl(req: express.Request): string {
   const configured = process.env.APP_URL?.trim();
   if (configured) {
-    return configured.replace(/\/+$/, '');
+    try {
+      const parsed = new URL(configured);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.origin;
+      }
+    } catch {
+      // fall through to request-derived host check
+    }
   }
   const protoHeader = req.headers['x-forwarded-proto'];
-  const proto =
+  const rawProto =
     typeof protoHeader === 'string' && protoHeader.trim()
-      ? protoHeader.split(',')[0].trim()
-      : req.protocol || 'https';
-  const host = req.get('host') || `localhost:${PORT}`;
-  return `${proto}://${host}`;
+      ? protoHeader.split(',')[0].trim().toLowerCase()
+      : (req.protocol || 'https').toLowerCase();
+  const proto = rawProto === 'http' || rawProto === 'https' ? rawProto : 'https';
+  const rawHost = (req.get('host') || '').trim();
+  const safeHost = /^[a-zA-Z0-9.-]+(:\d{1,5})?$/.test(rawHost) ? rawHost : `localhost:${PORT}`;
+  return `${proto}://${safeHost}`;
 }
 
 app.get('/robots.txt', (req, res) => {
@@ -136,13 +195,13 @@ app.get('/robots.txt', (req, res) => {
 });
 
 app.get('/sitemap.xml', (req, res) => {
-  const baseUrl = resolvePublicBaseUrl(req);
-  const lastMod = new Date().toISOString().slice(0, 10);
+  const baseUrl = escapeXml(resolvePublicBaseUrl(req));
+  const lastMod = escapeXml(new Date().toISOString().slice(0, 10));
 
   const urlEntries: string[] = [];
   for (const item of SITEMAP_TAB_PAIRS) {
-    const enPath = pathnameForTab(item.tab, 'en');
-    const csPath = pathnameForTab(item.tab, 'cs');
+    const enPath = escapeXml(pathnameForTab(item.tab, 'en'));
+    const csPath = escapeXml(pathnameForTab(item.tab, 'cs'));
     const alternates = [
       `    <xhtml:link rel="alternate" hreflang="en" href="${baseUrl}${enPath}" />`,
       `    <xhtml:link rel="alternate" hreflang="cs" href="${baseUrl}${csPath}" />`,
@@ -189,6 +248,10 @@ app.get('/api/puzzle71/network', async (_req, res) => {
 // Public anonymized leaderboard (middle of BTC addresses masked for user safety)
 app.get('/api/leaderboard', (req, res) => {
   try {
+    if (!checkRateLimit(`leaderboard:${getClientIp(req)}`, 60, 60_000)) {
+      res.status(429).json({ error: 'Too many leaderboard requests. Please wait a moment.' });
+      return;
+    }
     const rawLimit = Number(req.query?.limit ?? 50);
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 50;
     const leaderboard = store.getPublicLeaderboard(limit);
@@ -200,7 +263,7 @@ app.get('/api/leaderboard', (req, res) => {
   }
 });
 
-// Create or retrieve user session for a validated Bitcoin payout address
+// Create an isolated user session (or resume only if caller supplies the matching shareToken)
 app.post('/api/sessions', (req, res) => {
   try {
     const locale = req.body?.locale === 'cs' ? 'cs' : 'en';
@@ -215,6 +278,8 @@ app.post('/api/sessions', (req, res) => {
     }
 
     const btcAddress = typeof req.body?.btcAddress === 'string' ? req.body.btcAddress.trim() : '';
+    const existingShareToken =
+      typeof req.body?.existingShareToken === 'string' ? req.body.existingShareToken.trim() : undefined;
     const validation = validateBitcoinAddress(btcAddress, locale);
     if (!validation.valid || !validation.parsed) {
       res.status(400).json({
@@ -228,6 +293,7 @@ app.post('/api/sessions', (req, res) => {
     const session = store.createOrGetSession(
       validation.parsed.normalizedAddress,
       validation.parsed.type,
+      existingShareToken,
     );
     const summary = store.getSessionSummary(session.share_token);
     res.status(201).json(summary);
@@ -241,6 +307,10 @@ app.post('/api/sessions', (req, res) => {
 // Get session summary by share token (used when opening shareable URL on any device)
 app.get('/api/sessions/:token', (req, res) => {
   try {
+    if (!checkRateLimit(`get-session:${getClientIp(req)}`, 120, 60_000)) {
+      res.status(429).json({ error: 'Too many session requests. Please wait a moment.' });
+      return;
+    }
     const summary = store.getSessionSummary(req.params.token);
     if (!summary) {
       res.status(404).json({ error: 'Session link not found.' });
@@ -257,6 +327,10 @@ app.get('/api/sessions/:token', (req, res) => {
 // Update block allocation strategy (random vs sequential + starting position percent)
 app.patch('/api/sessions/:token/strategy', (req, res) => {
   try {
+    if (!checkRateLimit(`strategy:${getClientIp(req)}`, 30, 60_000)) {
+      res.status(429).json({ error: 'Too many strategy updates. Please wait a moment.' });
+      return;
+    }
     const blockMode = req.body?.blockMode === 'sequential' ? 'sequential' : 'random';
     const startPercent =
       req.body?.startPercent !== undefined ? Number(req.body.startPercent) : undefined;
@@ -264,18 +338,23 @@ app.patch('/api/sessions/:token/strategy', (req, res) => {
       typeof req.body?.deviceId === 'string' && req.body.deviceId.trim()
         ? req.body.deviceId.trim().slice(0, 80)
         : undefined;
+    const deviceSecret = extractDeviceSecret(req);
+    if (deviceId && !deviceSecret) {
+      res.status(401).json({ error: 'Missing device authorization secret.' });
+      return;
+    }
 
     const summary = store.updateSessionStrategy({
       shareToken: req.params.token,
       blockMode,
       startPercent,
       deviceId,
+      deviceSecret,
     });
     res.json(summary);
   } catch (err) {
-    res.status(400).json({
-      error: err instanceof Error ? err.message : 'Failed to save block strategy.',
-    });
+    const msg = err instanceof Error ? err.message : 'Failed to save block strategy.';
+    res.status(msg.includes('Neoprávněný') ? 403 : 400).json({ error: msg });
   }
 });
 
@@ -284,6 +363,12 @@ app.post('/api/sessions/:token/blocks/lease', (req, res) => {
   try {
     if (!checkRateLimit(`lease:${getClientIp(req)}`, 45, 60_000)) {
       res.status(429).json({ error: 'Too many block lease requests. Please wait a moment.' });
+      return;
+    }
+
+    const deviceSecret = extractDeviceSecret(req);
+    if (!deviceSecret) {
+      res.status(401).json({ error: 'Missing or invalid device authorization secret.' });
       return;
     }
 
@@ -316,6 +401,7 @@ app.post('/api/sessions/:token/blocks/lease', (req, res) => {
       gpuName,
       desiredCount,
       rateKps: Number.isFinite(rateKps) && rateKps > 0 ? rateKps : undefined,
+      deviceSecret,
     });
     res.json({
       block: blocks[0],
@@ -324,29 +410,50 @@ app.post('/api/sessions/:token/blocks/lease', (req, res) => {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Failed to lease keyspace block.';
-    res.status(msg.includes('limit') ? 429 : 404).json({ error: msg });
+    const status = msg.includes('limit') ? 429 : msg.includes('Neoprávněný') ? 403 : 404;
+    res.status(status).json({ error: msg });
   }
 });
 
 // Keep-alive heartbeat when a block is paused in an open browser tab
 app.post('/api/sessions/:token/blocks/:blockId/heartbeat', (req, res) => {
   try {
+    if (!checkRateLimit(`heartbeat:${getClientIp(req)}`, 60, 60_000)) {
+      res.status(429).json({ error: 'Too many heartbeat requests.' });
+      return;
+    }
+    const deviceSecret = extractDeviceSecret(req);
+    if (!deviceSecret) {
+      res.status(401).json({ error: 'Missing or invalid device authorization secret.' });
+      return;
+    }
     const blockId = Number(req.params.blockId);
     const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : 'unknown';
     const result = store.heartbeatBlock({
       shareToken: req.params.token,
       blockId,
       deviceId,
+      deviceSecret,
     });
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to refresh block lease.' });
+    const msg = err instanceof Error ? err.message : 'Failed to refresh block lease.';
+    res.status(msg.includes('Neoprávněný') ? 403 : 400).json({ error: msg });
   }
 });
 
 // Save checkpoint progress and verified PoW shares inside a leased block
 app.post('/api/sessions/:token/blocks/:blockId/checkpoint', (req, res) => {
   try {
+    if (!checkRateLimit(`checkpoint:${getClientIp(req)}`, 90, 60_000)) {
+      res.status(429).json({ error: 'Too many checkpoint requests.' });
+      return;
+    }
+    const deviceSecret = extractDeviceSecret(req);
+    if (!deviceSecret) {
+      res.status(401).json({ error: 'Missing or invalid device authorization secret.' });
+      return;
+    }
     const blockId = Number(req.params.blockId);
     const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : 'unknown';
     const progressOffset = Number(req.body?.progressOffset ?? 0);
@@ -359,16 +466,27 @@ app.post('/api/sessions/:token/blocks/:blockId/checkpoint', (req, res) => {
       progressOffset,
       rateKps,
       powOffsets,
+      deviceSecret,
     });
     res.json({ ok: true, powCount: result.powCount });
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to save block checkpoint.' });
+    const msg = err instanceof Error ? err.message : 'Failed to save block checkpoint.';
+    res.status(msg.includes('Neoprávněný') ? 403 : 400).json({ error: msg });
   }
 });
 
 // Mark a leased block as 100% completed (requires verified cryptographic PoW shares)
 app.post('/api/sessions/:token/blocks/:blockId/complete', (req, res) => {
   try {
+    if (!checkRateLimit(`complete:${getClientIp(req)}`, 30, 60_000)) {
+      res.status(429).json({ error: 'Too many block completion requests.' });
+      return;
+    }
+    const deviceSecret = extractDeviceSecret(req);
+    if (!deviceSecret) {
+      res.status(401).json({ error: 'Missing or invalid device authorization secret.' });
+      return;
+    }
     const blockId = Number(req.params.blockId);
     const deviceId = typeof req.body?.deviceId === 'string' ? req.body.deviceId : 'unknown';
     const rateKps = Number(req.body?.rateKps ?? 0);
@@ -379,36 +497,87 @@ app.post('/api/sessions/:token/blocks/:blockId/complete', (req, res) => {
       deviceId,
       rateKps,
       powOffsets,
+      deviceSecret,
     });
     const summary = store.getSessionSummary(req.params.token);
     res.json({ ok: true, summary });
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : 'Failed to complete block.' });
+    const msg = err instanceof Error ? err.message : 'Failed to complete block.';
+    res.status(msg.includes('Neoprávněný') ? 403 : 400).json({ error: msg });
   }
 });
 
 // Private mining pool broadcast endpoint (MARA Slipstream + Rebar Shield)
+// Cryptographically verifies rawTxHex structure, ECDSA signatures, Puzzle #71 Hash160, UTXOs & 85/15 split before relaying.
 app.post('/api/broadcast-private', async (req, res) => {
   try {
+    if (!checkRateLimit(`broadcast:${getClientIp(req)}`, 20, 60_000)) {
+      res.status(429).json({ error: 'Too many broadcast requests. Please wait a moment.' });
+      return;
+    }
+
     const rawTxHex = typeof req.body?.rawTxHex === 'string' ? req.body.rawTxHex : '';
     const dryRun = Boolean(req.body?.dryRun);
     const locale = req.body?.locale === 'cs' ? 'cs' : 'en';
-    const shareToken = typeof req.body?.shareToken === 'string' ? req.body.shareToken : '';
-    const txid = typeof req.body?.txid === 'string' ? req.body.txid : '';
-    const userSats = String(req.body?.userSats ?? '0');
-    const adminSats = String(req.body?.adminSats ?? '0');
-    const feeSats = String(req.body?.feeSats ?? '0');
+    const shareToken = typeof req.body?.shareToken === 'string' ? req.body.shareToken.trim() : '';
+
+    const adminParsed = validateBitcoinAddress(ADMIN_PAYOUT_ADDRESS, locale);
+    if (!adminParsed.valid || !adminParsed.parsed) {
+      throw new Error('Server platform payout address configuration is invalid.');
+    }
+
+    const session = shareToken ? store.getSessionByToken(shareToken) : null;
+    if (!dryRun && !session) {
+      res.status(401).json({
+        error:
+          locale === 'cs'
+            ? 'Pro skutečné privátní odeslání transakce je vyžadována platná aktivní relace.'
+            : 'A valid active session token is required for live private pool submission.',
+      });
+      return;
+    }
+
+    let expectedUserScript: Uint8Array | undefined;
+    if (session) {
+      const userParsed = validateBitcoinAddress(session.btc_address, locale);
+      if (userParsed.valid && userParsed.parsed) {
+        expectedUserScript = userParsed.parsed.scriptPubKey;
+      }
+    }
+
+    let allowedUtxos: Array<{ txid: string; vout: number; valueSats: bigint }> | undefined;
+    let enforceAllowedUtxos = false;
+    if (!dryRun) {
+      const net = await fetchPuzzle71NetworkInfo();
+      if (net.source === 'live-mempool' && net.utxos.length > 0) {
+        allowedUtxos = net.utxos.map((u) => ({
+          txid: u.txid,
+          vout: u.vout,
+          valueSats: BigInt(u.valueSats),
+        }));
+        enforceAllowedUtxos = true;
+      }
+    }
+
+    const verified = verifySignedPuzzleTx({
+      rawTxHex,
+      expectedHash160Hex: dryRun ? undefined : PUZZLE_71_HASH160_HEX,
+      expectedUserScript,
+      expectedAdminScript: adminParsed.parsed.scriptPubKey,
+      allowedUtxos,
+      enforceAllowedUtxos,
+    });
 
     const result = await broadcastPrivatePoolTransaction({ rawTxHex, dryRun, locale });
 
-    if (shareToken) {
+    if (session) {
       store.recordRelaySubmission({
-        shareToken,
-        txid,
-        rawTxHex,
-        userSats,
-        adminSats,
-        feeSats,
+        shareToken: session.share_token,
+        txid: verified.txid,
+        rawTxHex: rawTxHex.trim().toLowerCase(),
+        userSats: verified.userSats.toString(),
+        adminSats: verified.adminSats.toString(),
+        feeSats: verified.feeSats.toString(),
         isDryRun: dryRun,
         relayResultsJson: JSON.stringify(result.receipts),
       });

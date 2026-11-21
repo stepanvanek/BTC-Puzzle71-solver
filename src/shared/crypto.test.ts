@@ -2,7 +2,7 @@ import { bech32m } from '@scure/base';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculatePayoutSplit, validateBitcoinAddress } from './btcAddress.ts';
-import { buildAndSignPuzzle71Tx, privateKeyToHash160Hex } from './btcTx.ts';
+import { buildAndSignPuzzle71Tx, privateKeyToHash160Hex, verifySignedPuzzleTx } from './btcTx.ts';
 import {
   ADMIN_PAYOUT_ADDRESS,
   BLOCK_SIZE,
@@ -154,4 +154,67 @@ test('Sweeps multiple economical Puzzle #71 UTXOs while skipping uneconomical du
   assert.equal(result.inputCount, 3);
   assert.equal(result.totalInputSats, 710_000_000n);
   assert.equal(result.userSats + result.adminSats + result.feeSats, 710_000_000n);
+});
+
+test('verifySignedPuzzleTx accepts authentic signed tx and rejects tampered signatures, wrong Hash160, or unauthorized UTXOs', () => {
+  const testPrivKey = 0x4123456789abcdef01n;
+  const signerHash160 = privateKeyToHash160Hex(testPrivKey);
+  const userAddr = 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4';
+  const utxos = [{ txid: 'a'.repeat(64), vout: 0, valueSats: 710_000_000n }];
+
+  const signed = buildAndSignPuzzle71Tx({
+    privateKey: testPrivKey,
+    utxos,
+    userAddress: userAddr,
+    feeRateSatPerVb: 12,
+  });
+
+  const userScript = validateBitcoinAddress(userAddr).parsed!.scriptPubKey;
+  const adminScript = validateBitcoinAddress(ADMIN_PAYOUT_ADDRESS).parsed!.scriptPubKey;
+
+  const verified = verifySignedPuzzleTx({
+    rawTxHex: signed.txHex,
+    expectedHash160Hex: signerHash160,
+    expectedUserScript: userScript,
+    expectedAdminScript: adminScript,
+    allowedUtxos: utxos,
+    enforceAllowedUtxos: true,
+  });
+  assert.equal(verified.txid, signed.txid);
+  assert.equal(verified.userSats, signed.userSats);
+  assert.equal(verified.adminSats, signed.adminSats);
+  assert.equal(verified.feeSats, signed.feeSats);
+
+  // Rejects mismatched Puzzle #71 Hash160
+  assert.throws(
+    () =>
+      verifySignedPuzzleTx({
+        rawTxHex: signed.txHex,
+        expectedHash160Hex: PUZZLE_71_HASH160_HEX,
+      }),
+    /Hash160/,
+  );
+
+  // Rejects unauthorized UTXO
+  assert.throws(
+    () =>
+      verifySignedPuzzleTx({
+        rawTxHex: signed.txHex,
+        allowedUtxos: [{ txid: 'b'.repeat(64), vout: 0, valueSats: 710_000_000n }],
+        enforceAllowedUtxos: true,
+      }),
+    /not an active Puzzle #71 UTXO/,
+  );
+
+  // Rejects arbitrary non-tx hex / tampered bytes
+  assert.throws(
+    () => verifySignedPuzzleTx({ rawTxHex: signed.txHex + '00' }),
+    /trailing bytes/,
+  );
+  const lastByte = parseInt(signed.txHex.slice(-2), 16) ^ 0xff;
+  const tamperedLocktime = signed.txHex.slice(0, -2) + lastByte.toString(16).padStart(2, '0');
+  assert.throws(
+    () => verifySignedPuzzleTx({ rawTxHex: tamperedLocktime }),
+    /Invalid ECDSA signature/,
+  );
 });

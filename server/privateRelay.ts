@@ -221,6 +221,21 @@ async function postJsonWithTimeout(
  * mining-pool endpoints (MARA Slipstream & Rebar Shield + optional custom pool RPC).
  * NEVER broadcasts to the public mempool to prevent RBF front-running.
  */
+function resolveHttpsPoolUrl(raw: string | undefined, fallback: string): string {
+  const candidate = raw?.trim();
+  if (!candidate) return fallback;
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new Error('Invalid private pool RPC URL configuration.');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Private pool endpoints must use HTTPS.');
+  }
+  return parsed.toString();
+}
+
 export async function broadcastPrivatePoolTransaction(params: {
   rawTxHex: string;
   dryRun?: boolean;
@@ -235,10 +250,16 @@ export async function broadcastPrivatePoolTransaction(params: {
     );
   }
 
-  const slipstreamUrl =
-    process.env.SLIPSTREAM_API_URL || 'https://slipstream.mara.com/rest-api/transactions';
-  const rebarUrl = process.env.REBAR_SHIELD_RPC_URL || 'https://shield.rebarlabs.io/v1/rpc';
-  const customRpcUrl = process.env.CUSTOM_POOL_RPC_URL?.trim();
+  const slipstreamUrl = resolveHttpsPoolUrl(
+    process.env.SLIPSTREAM_API_URL,
+    'https://slipstream.mara.com/rest-api/transactions',
+  );
+  const rebarUrl = resolveHttpsPoolUrl(
+    process.env.REBAR_SHIELD_RPC_URL,
+    'https://shield.rebarlabs.io/v1/rpc',
+  );
+  const customRpcRaw = process.env.CUSTOM_POOL_RPC_URL?.trim();
+  const customRpcUrl = customRpcRaw ? resolveHttpsPoolUrl(customRpcRaw, '') : undefined;
   const customAuth = process.env.CUSTOM_POOL_AUTH_HEADER?.trim();
 
   const slipstreamName = isCs

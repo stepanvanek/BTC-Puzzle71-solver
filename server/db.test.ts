@@ -35,14 +35,22 @@ test('Per-user session leasing blocks fake PoW completions and verifies authenti
     'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
     'P2WPKH (SegWit v0)',
   );
-  assert.ok(session.share_token.length >= 6);
+  assert.ok(session.share_token.length >= 20);
 
-  // Returning the same BTC address returns the same share_token
-  const sameSession = store.createOrGetSession(
+  // Entering the same public BTC address without the share_token creates a separate isolated session
+  const isolatedSession = store.createOrGetSession(
     'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
     'P2WPKH (SegWit v0)',
   );
-  assert.equal(sameSession.share_token, session.share_token);
+  assert.notEqual(isolatedSession.share_token, session.share_token);
+
+  // Supplying the matching share_token resumes the same session
+  const resumedSession = store.createOrGetSession(
+    'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4',
+    'P2WPKH (SegWit v0)',
+    session.share_token,
+  );
+  assert.equal(resumedSession.share_token, session.share_token);
 
   // Device A leases a 2^29 block
   const blockA = store.leaseUniqueBlock({
@@ -497,4 +505,74 @@ test('Per-user block isolation: User B must still traverse blocks completed by U
 
   store.close();
 });
+
+test('Per-device secret enforcement and cross-session deviceId composite PK isolation', () => {
+  const store = new Puzzle71Store(':memory:', {
+    powHexPrefix: '00',
+    minPowSharesFullBlock: 2,
+  });
+
+  const s1 = store.createOrGetSession('bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', 'P2WPKH (SegWit v0)');
+  const s2 = store.createOrGetSession('1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa', 'P2PKH (Legacy)');
+
+  // Same deviceId in two sessions must remain isolated via composite PK (id, session_id)
+  const b1 = store.leaseUniqueBlock({
+    shareToken: s1.share_token,
+    deviceId: 'shared-dev-id',
+    deviceLabel: 'Browser 1',
+    computeMode: 'webgpu',
+    gpuName: 'GPU 1',
+    deviceSecret: 'secret-one-1234567890',
+  });
+  const b2 = store.leaseUniqueBlock({
+    shareToken: s2.share_token,
+    deviceId: 'shared-dev-id',
+    deviceLabel: 'Browser 2',
+    computeMode: 'cpu',
+    gpuName: 'CPU 2',
+    deviceSecret: 'secret-two-1234567890',
+  });
+
+  assert.notEqual(b1.id, b2.id);
+  const s1Summary = store.getSessionSummary(s1.share_token);
+  const s2Summary = store.getSessionSummary(s2.share_token);
+  assert.equal(s1Summary?.devices.length, 1);
+  assert.equal(s2Summary?.devices.length, 1);
+
+  // Spoofing deviceId with missing or wrong secret must be rejected
+  assert.throws(
+    () =>
+      store.checkpointBlock({
+        shareToken: s1.share_token,
+        blockId: b1.id,
+        deviceId: 'shared-dev-id',
+        progressOffset: 100,
+        rateKps: 1000,
+        deviceSecret: 'wrong-secret',
+      }),
+    /tajný token zařízení/,
+  );
+
+  assert.throws(
+    () =>
+      store.heartbeatBlock({
+        shareToken: s1.share_token,
+        blockId: b1.id,
+        deviceId: 'shared-dev-id',
+      }),
+    /tajný token zařízení/,
+  );
+
+  // Correct secret works cleanly
+  const hb = store.heartbeatBlock({
+    shareToken: s1.share_token,
+    blockId: b1.id,
+    deviceId: 'shared-dev-id',
+    deviceSecret: 'secret-one-1234567890',
+  });
+  assert.equal(hb.active, true);
+
+  store.close();
+});
+
 

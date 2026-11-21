@@ -101,7 +101,16 @@ const MAX_INCOMING_POW_OFFSETS = 32;
 const STALE_LEASE_MS = 360_000; // 6 minutes without heartbeat
 
 function generateShareToken(): string {
-  return crypto.randomBytes(6).toString('base64url'); // 8-10 clean URL-safe chars
+  return crypto.randomBytes(16).toString('base64url'); // 128-bit URL-safe capability token (22 chars)
+}
+
+function hashDeviceSecret(secret: string): string {
+  return crypto.createHash('sha256').update(secret, 'utf8').digest('hex');
+}
+
+function hashesMatchConstantTime(hexA: string, hexB: string): boolean {
+  if (hexA.length !== hexB.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(hexA, 'hex'), Buffer.from(hexB, 'hex'));
 }
 
 function generateRandomBlockIndex(): bigint {
@@ -218,7 +227,7 @@ export class Puzzle71Store {
       );
 
       CREATE TABLE IF NOT EXISTS devices (
-        id TEXT PRIMARY KEY,
+        id TEXT NOT NULL,
         session_id TEXT NOT NULL,
         label TEXT NOT NULL,
         compute_mode TEXT NOT NULL,
@@ -227,6 +236,8 @@ export class Puzzle71Store {
         keys_checked INTEGER NOT NULL DEFAULT 0,
         blocks_completed INTEGER NOT NULL DEFAULT 0,
         last_seen_at INTEGER NOT NULL,
+        device_token_hash TEXT,
+        PRIMARY KEY (id, session_id),
         FOREIGN KEY (session_id) REFERENCES user_sessions(id) ON DELETE CASCADE
       );
 
@@ -267,6 +278,43 @@ export class Puzzle71Store {
       );
     `);
 
+    if (!this.hasColumn('devices', 'device_token_hash')) {
+      this.db.exec(`ALTER TABLE devices ADD COLUMN device_token_hash TEXT`);
+    }
+
+    // Migrate legacy single-PK devices(id) to composite PRIMARY KEY (id, session_id) so one session can never steal another session's device row
+    const deviceCols = this.db.prepare('PRAGMA table_info(devices)').all() as Array<{
+      name: string;
+      pk: number;
+    }>;
+    const sessionIdCol = deviceCols.find((c) => c.name === 'session_id');
+    if (sessionIdCol && sessionIdCol.pk === 0) {
+      this.db.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE devices_v2 (
+          id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          label TEXT NOT NULL,
+          compute_mode TEXT NOT NULL,
+          gpu_name TEXT NOT NULL,
+          last_rate_kps REAL NOT NULL DEFAULT 0,
+          keys_checked INTEGER NOT NULL DEFAULT 0,
+          blocks_completed INTEGER NOT NULL DEFAULT 0,
+          last_seen_at INTEGER NOT NULL,
+          device_token_hash TEXT,
+          PRIMARY KEY (id, session_id),
+          FOREIGN KEY (session_id) REFERENCES user_sessions(id) ON DELETE CASCADE
+        );
+        INSERT OR IGNORE INTO devices_v2
+          (id, session_id, label, compute_mode, gpu_name, last_rate_kps, keys_checked, blocks_completed, last_seen_at, device_token_hash)
+        SELECT id, session_id, label, compute_mode, gpu_name, last_rate_kps, keys_checked, blocks_completed, last_seen_at, device_token_hash
+        FROM devices;
+        DROP TABLE devices;
+        ALTER TABLE devices_v2 RENAME TO devices;
+        COMMIT;
+      `);
+    }
+
     if (!this.hasColumn('user_sessions', 'block_mode')) {
       this.db.exec(`ALTER TABLE user_sessions ADD COLUMN block_mode TEXT NOT NULL DEFAULT 'random'`);
     }
@@ -297,13 +345,18 @@ export class Puzzle71Store {
     `);
   }
 
-  createOrGetSession(btcAddress: string, addressType: string): UserSessionRow {
-    const existing = this.db
-      .prepare('SELECT * FROM user_sessions WHERE btc_address = ? LIMIT 1')
-      .get(btcAddress) as UserSessionRow | undefined;
-
-    if (existing) {
-      return existing;
+  createOrGetSession(
+    btcAddress: string,
+    addressType: string,
+    existingShareToken?: string,
+  ): UserSessionRow {
+    if (existingShareToken) {
+      const existing = this.db
+        .prepare('SELECT * FROM user_sessions WHERE share_token = ? AND btc_address = ? LIMIT 1')
+        .get(existingShareToken, btcAddress) as UserSessionRow | undefined;
+      if (existing) {
+        return existing;
+      }
     }
 
     const id = crypto.randomUUID();
@@ -341,11 +394,28 @@ export class Puzzle71Store {
     return row ?? null;
   }
 
+  private assertDeviceAuthorized(
+    sessionId: string,
+    deviceId: string,
+    deviceSecret?: string,
+  ): void {
+    const row = this.db
+      .prepare('SELECT device_token_hash FROM devices WHERE id = ? AND session_id = ?')
+      .get(deviceId, sessionId) as { device_token_hash: string | null } | undefined;
+    if (!row || !row.device_token_hash) {
+      return;
+    }
+    if (!deviceSecret || !hashesMatchConstantTime(hashDeviceSecret(deviceSecret), row.device_token_hash)) {
+      throw new Error('Neoprávněný přístup k zařízení (neplatný tajný token zařízení).');
+    }
+  }
+
   updateSessionStrategy(params: {
     shareToken: string;
     blockMode: BlockSelectionMode;
     startPercent?: number;
     deviceId?: string;
+    deviceSecret?: string;
   }): SessionSummary {
     const session = this.getSessionByToken(params.shareToken);
     if (!session) {
@@ -370,6 +440,7 @@ export class Puzzle71Store {
 
       // If this device has an unstarted 0-progress lease, release it so the next start immediately applies the new strategy
       if (params.deviceId) {
+        this.assertDeviceAuthorized(session.id, params.deviceId, params.deviceSecret);
         this.db
           .prepare(
             `DELETE FROM searched_blocks
@@ -394,19 +465,31 @@ export class Puzzle71Store {
     computeMode: string;
     gpuName: string;
     rateKps?: number;
+    deviceSecret?: string;
   }): void {
+    const existing = this.db
+      .prepare('SELECT device_token_hash FROM devices WHERE id = ? AND session_id = ?')
+      .get(params.deviceId, params.sessionId) as { device_token_hash: string | null } | undefined;
+
+    const incomingHash = params.deviceSecret ? hashDeviceSecret(params.deviceSecret) : null;
+    if (existing?.device_token_hash) {
+      if (!incomingHash || !hashesMatchConstantTime(incomingHash, existing.device_token_hash)) {
+        throw new Error('Neoprávněný přístup k zařízení (neplatný tajný token zařízení).');
+      }
+    }
+
     const now = Date.now();
     this.db
       .prepare(
-        `INSERT INTO devices (id, session_id, label, compute_mode, gpu_name, last_rate_kps, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           session_id = excluded.session_id,
+        `INSERT INTO devices (id, session_id, label, compute_mode, gpu_name, last_rate_kps, last_seen_at, device_token_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id, session_id) DO UPDATE SET
            label = excluded.label,
            compute_mode = excluded.compute_mode,
            gpu_name = excluded.gpu_name,
            last_rate_kps = COALESCE(?, devices.last_rate_kps),
-           last_seen_at = excluded.last_seen_at`,
+           last_seen_at = excluded.last_seen_at,
+           device_token_hash = COALESCE(devices.device_token_hash, excluded.device_token_hash)`,
       )
       .run(
         params.deviceId,
@@ -416,6 +499,7 @@ export class Puzzle71Store {
         params.gpuName,
         params.rateKps ?? 0,
         now,
+        incomingHash,
         params.rateKps ?? null,
       );
   }
@@ -432,6 +516,7 @@ export class Puzzle71Store {
     gpuName: string;
     desiredCount?: number;
     rateKps?: number;
+    deviceSecret?: string;
   }): LeasedBlock[] {
     const session = this.getSessionByToken(params.shareToken);
     if (!session) {
@@ -458,6 +543,7 @@ export class Puzzle71Store {
         computeMode: params.computeMode,
         gpuName: params.gpuName,
         rateKps: params.rateKps,
+        deviceSecret: params.deviceSecret,
       });
 
       // 1. Resume ALL existing unfinished blocks owned by this exact device in order
@@ -670,6 +756,7 @@ export class Puzzle71Store {
     deviceLabel: string;
     computeMode: string;
     gpuName: string;
+    deviceSecret?: string;
   }): LeasedBlock {
     return this.leaseBlockBatch({ ...params, desiredCount: 1 })[0];
   }
@@ -719,6 +806,7 @@ export class Puzzle71Store {
     shareToken: string;
     blockId: number;
     deviceId: string;
+    deviceSecret?: string;
   }): { active: boolean; powCount: number; status: 'leased' | 'completed' | 'reclaimed' } {
     const session = this.getSessionByToken(params.shareToken);
     if (!session) throw new Error('Relace nenalezena.');
@@ -754,6 +842,8 @@ export class Puzzle71Store {
       };
     }
 
+    this.assertDeviceAuthorized(session.id, params.deviceId, params.deviceSecret);
+
     this.db
       .prepare(
         `UPDATE searched_blocks SET heartbeat_at = ?
@@ -778,6 +868,7 @@ export class Puzzle71Store {
     progressOffset: number;
     rateKps: number;
     powOffsets?: number[];
+    deviceSecret?: string;
   }): { powCount: number } {
     const session = this.getSessionByToken(params.shareToken);
     if (!session) throw new Error('Relace nenalezena.');
@@ -808,6 +899,8 @@ export class Puzzle71Store {
       if (row.device_id !== params.deviceId) {
         throw new Error('Tento blok mezitím po delší neaktivitě převzalo jiné vaše zařízení.');
       }
+
+      this.assertDeviceAuthorized(session.id, params.deviceId, params.deviceSecret);
 
       const mergedOffsets = this.verifyAndMergePowOffsets(row, params.powOffsets);
       let clampedOffset = Math.max(
@@ -859,6 +952,7 @@ export class Puzzle71Store {
     deviceId: string;
     rateKps: number;
     powOffsets?: number[];
+    deviceSecret?: string;
   }): void {
     const session = this.getSessionByToken(params.shareToken);
     if (!session) throw new Error('Relace nenalezena.');
@@ -887,6 +981,8 @@ export class Puzzle71Store {
       if (row.device_id !== params.deviceId) {
         throw new Error('Tento blok mezitím po delší neaktivitě převzalo jiné vaše zařízení.');
       }
+
+      this.assertDeviceAuthorized(session.id, params.deviceId, params.deviceSecret);
 
       const mergedOffsets = this.verifyAndMergePowOffsets(row, params.powOffsets);
       const requiredShares = getRequiredPowShares(row.total_keys, this.minPowSharesFullBlock);
