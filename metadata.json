@@ -1,0 +1,6 @@
+{
+  "name": "Puzzle71 WebGPU",
+  "description": "Distributed browser WebGPU solver for Bitcoin Puzzle #71 supporting all Bitcoin address formats, multi-device URL sync, and private mining-pool transaction relay.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

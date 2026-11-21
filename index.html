@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bitcoin Puzzle #71 — WebGPU Solver & Key Directory</title>
+    <meta
+      name="description"
+      content="Browser WebGPU solver for Bitcoin Puzzle #71. Full #1–#160 directory (988.498 BTC total, 903 BTC remaining), odds calculator, 2²⁹ blocks, and private pool relay."
+    />
+    <meta
+      name="keywords"
+      content="Bitcoin Puzzle, Bitcoin Puzzle 71, Bitcoin Puzzle solver, Puzzle #71, WebGPU solver, Bitcoin puzzle list, secp256k1, Hash160, 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU, Bitcoin private key, MARA Slipstream, Rebar Shield"
+    />
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <meta name="theme-color" content="#090B10" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+
+    <!-- OpenGraph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="cs_CZ" />
+    <meta property="og:site_name" content="Bitcoin Puzzle #71 WebGPU" />
+    <meta property="og:title" content="Bitcoin Puzzle #71 — WebGPU Solver & Key Directory" />
+    <meta
+      property="og:description"
+      content="Parallel browser WebGPU solver for Bitcoin Puzzle #71. Verified directory of all 160 addresses (988.498 BTC challenge), ETA calculator, and RBF front-running protection."
+    />
+    <meta property="og:image" content="/og-puzzle71.jpg" />
+    <meta property="og:image:alt" content="Bitcoin Puzzle #71 WebGPU secp256k1 browser solver" />
+
+    <!-- Twitter / X Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bitcoin Puzzle #71 — WebGPU Solver & Key Directory" />
+    <meta
+      name="twitter:description"
+      content="WebGPU scanner for Bitcoin Puzzle #71 in your browser with the complete #1–#160 puzzle directory, probability calculator, and private mining-pool relay."
+    />
+    <meta name="twitter:image" content="/og-puzzle71.jpg" />
+
+    <!-- Schema.org Structured Data (WebApplication + Dataset + FAQPage) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "name": "Bitcoin Puzzle #71 WebGPU",
+            "alternateName": ["Puzzle71 WebGPU", "Bitcoin Puzzle Solver"],
+            "applicationCategory": "EducationalApplication",
+            "operatingSystem": "All",
+            "inLanguage": ["en", "cs"],
+            "keywords": "Bitcoin Puzzle, Bitcoin Puzzle 71, WebGPU solver, secp256k1, Hash160",
+            "description": "Educational and research web application for parallel key scanning across the Bitcoin Puzzle #71 range using browser WebGPU shaders.",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            }
+          },
+          {
+            "@type": "Dataset",
+            "name": "Bitcoin Puzzle Transaction (#1–#160) — Addresses & Keyspace Ranges",
+            "description": "Reference dataset of all 160 cryptographic Bitcoin addresses from the Bitcoin Puzzle Transaction series (988.498 BTC total, 903 BTC remaining unsolved; created in 2015 by saatoshi_rising), including hex private key ranges, BTC rewards, public key exposure status, and active target Puzzle #71 (1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU).",
+            "keywords": ["Bitcoin Puzzle", "Puzzle 71", "secp256k1", "1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU"],
+            "inLanguage": "en",
+            "isAccessibleForFree": true
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is Bitcoin Puzzle #71?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Bitcoin Puzzle #71 is part of a 2015 cryptographic challenge (988.498 BTC total across 160 addresses) created to demonstrate the security of the secp256k1 elliptic curve. The private key for address 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU lies strictly within the 71-bit range from 2^70 (0x400000000000000000) to 2^71 - 1 (0x7fffffffffffffffff) and holds a 7.10 BTC reward."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Who created the Bitcoin Puzzle and how much BTC remains?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "The challenge was published in January 2015 by an anonymous creator known as saatoshi_rising. Following prize top-ups in 2017 and 2023, the #1–#160 series totals 988.498 BTC: 83 puzzles have been solved (85.498 BTC) and 77 remain unsolved holding 903 BTC."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Why can't Pollard's Kangaroo be used on Puzzle #71 like on Puzzle #140?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Address 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU has never broadcast a spending transaction, so its public key is hidden and only its 160-bit Hash160 digest is known. Kangaroo algorithms require an exposed public key, so Puzzle #71 requires direct secp256k1 and Hash160 scanning."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How does in-browser WebGPU scanning work?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "The app runs WGSL compute shaders directly on your GPU inside the browser. Each GPU thread derives secp256k1 points, hashes compressed public keys with SHA-256 and RIPEMD-160 into Hash160, and compares them locally without ever transmitting candidate keys."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Why isn't a winning transaction sent to the public mempool?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Spending a Legacy P2PKH address reveals its public key in the public mempool, allowing automated bots to extract it, solve the 71-bit key in seconds, and hijack the transaction via RBF front-running (as happened to Puzzle #66 and #69). Transactions are signed locally and submitted directly to private mining pool APIs."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is this tool strictly educational and is there any guarantee?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "This application is provided strictly for educational and research purposes on an as-is basis with zero guarantee of finding a key, earning any reward, or uptime. Scanning a 2^70 keyspace carries extreme mathematical odds and users assume all hardware, power, and network risks."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <main style="max-width:960px;margin:0 auto;padding:32px;font-family:sans-serif;color:#e2e8f0;background:#090b10;">
+        <h1>Bitcoin Puzzle #71 — Browser WebGPU Solver &amp; Key Directory</h1>
+        <p>
+          The Bitcoin Puzzle is a 2015 cryptographic challenge (988.498 BTC total across 160 Bitcoin addresses with
+          private key bit ranges from 1 to 160 bits). The lowest unsolved target without an exposed public key is
+          <strong>Puzzle #71</strong> (address <code>1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU</code>,
+          7.10 BTC reward, range <code>0x400000000000000000</code> to <code>0x7fffffffffffffffff</code>, i.e., 2⁷⁰ keys).
+        </p>
+        <h2>Key Bitcoin Puzzle Addresses (#66–#75, #135, #140)</h2>
+        <ul>
+          <li>Puzzle #66 (6.60 BTC): 13zb1hQbWVsc2S7ZTZnP2G4undNNpdh5so — solved (25.62%, 2024-09-12, RBF attack)</li>
+          <li>Puzzle #67 (6.70 BTC): 1BY8GQbnueYofwSuFAT3USAhGjPrkxDdW9 — solved (79.78%, 2025-02-21, private mining)</li>
+          <li>Puzzle #68 (6.80 BTC): 1MVDYgVaSN6iKKEsbzRUAYFrYJadLYZvvZ — solved (49.01%, 2025-04-06, private pool)</li>
+          <li>Puzzle #69 (6.90 BTC): 19vkiEajfhuZ8bs8Zu2jgmC6oqZbWqhxhG — solved (0.72%, 2025-04-30, RBF attack)</li>
+          <li>Puzzle #70 (0.70 BTC): 19YZECXj3SxEZMoUeJ1yiPsw8xANe7M7QR — solved (64.40%, 2019-06-09)</li>
+          <li>Puzzle #71 (7.10 BTC): 1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU — active unsolved target (Hash160 f6f5431d25bbf7b12e8add9af5e3475c44a0a5b8)</li>
+          <li>Puzzle #72 (7.20 BTC): 1JTK7s9YVYywfm5XUH7RNhHJH1LshCaRFR — unsolved</li>
+          <li>Puzzle #75 (0.75 BTC): 1J36UjUByGroXcCvmj13U6uwaVv9caEeAt — solved (19.32%, 2019-06-10)</li>
+          <li>Puzzle #135 (13.50 BTC): 16RGFo6hjq9ym6Pj7N5H7L1NR1rVPJyw2v — solved (71.21%, 2026-07-28, RCKangaroo)</li>
+          <li>Puzzle #140 (14.00 BTC): 1QKBaU6WAeycb3DbKbLBkX7vJiaS8r42Xo — unsolved (public key exposed)</li>
+        </ul>
+        <p>Enable JavaScript in your browser to launch the interactive WebGPU solver, #1–#160 table, and ETA calculator.</p>
+      </main>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

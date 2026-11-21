@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>/</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/" />
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>/cs</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/" />
+    <changefreq>daily</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>/puzzles</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/puzzles" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/tabulka-puzzle" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/puzzles" />
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>/cs/tabulka-puzzle</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/puzzles" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/tabulka-puzzle" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/puzzles" />
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>/leaderboard</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/leaderboard" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/zebricek" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/leaderboard" />
+    <changefreq>hourly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>/cs/zebricek</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/leaderboard" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/zebricek" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/leaderboard" />
+    <changefreq>hourly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>/how-it-works</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/how-it-works" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/jak-to-funguje" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/how-it-works" />
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>/cs/jak-to-funguje</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/how-it-works" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/jak-to-funguje" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/how-it-works" />
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>/transaction-protection</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/transaction-protection" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/ochrana-transakce" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/transaction-protection" />
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>/cs/ochrana-transakce</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/transaction-protection" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/ochrana-transakce" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/transaction-protection" />
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>/terms</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/terms" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/podminky" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/terms" />
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>/cs/podminky</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="/terms" />
+    <xhtml:link rel="alternate" hreflang="cs" href="/cs/podminky" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="/terms" />
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
+  </url>
+</urlset>
