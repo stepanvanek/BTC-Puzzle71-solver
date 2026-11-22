@@ -32,6 +32,15 @@ import {
   submitWebGPUSlice,
   type HardwareCapabilities,
 } from './engine/computeEngine.ts';
+import {
+  type ComputeProfile,
+  MAX_CALIBRATION_STORAGE_KEY,
+  SMOOTH_CALIBRATION_STORAGE_KEY,
+  computeNextDispatchKeys,
+  getComputeProfileConfig,
+  loadSavedComputeProfile,
+  saveComputeProfile,
+} from './engine/computeProfile.ts';
 import { buildAndSignPuzzle71Tx, type SignedPuzzleTxResult } from './shared/btcTx.ts';
 import {
   ADMIN_PAYOUT_ADDRESS,
@@ -98,6 +107,15 @@ async function safeParseJson<T>(res: Response, fallbackErr: string): Promise<T> 
   }
 }
 
+async function yieldToBrowserUi(): Promise<void> {
+  const navScheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  if (typeof navScheduler?.yield === 'function') {
+    await navScheduler.yield();
+    return;
+  }
+  await new Promise<void>((r) => setTimeout(r, 0));
+}
+
 export default function App() {
   const initialRoute =
     typeof window !== 'undefined'
@@ -161,6 +179,17 @@ export default function App() {
   const batchIndexRef = useRef(0);
   const lastMeasuredRateRef = useRef<number>(loadSavedRateKps());
   const lastHistoryAtRef = useRef(0);
+
+  const [computeProfile, setComputeProfile] = useState<ComputeProfile>(() =>
+    loadSavedComputeProfile(),
+  );
+  const computeProfileRef = useRef<ComputeProfile>(computeProfile);
+
+  const handleChangeComputeProfile = useCallback((nextProfile: ComputeProfile) => {
+    computeProfileRef.current = nextProfile;
+    setComputeProfile(nextProfile);
+    saveComputeProfile(nextProfile);
+  }, []);
 
   const [isProbingHardware, setIsProbingHardware] = useState(false);
   const [isUpdatingStrategy, setIsUpdatingStrategy] = useState(false);
@@ -816,17 +845,30 @@ export default function App() {
     setIsBusyStarting(true);
 
     const token = sessionData.session.shareToken;
-    const CALIBRATION_KEY = 'puzzle71.dispatchKeys_v3';
     const RATE_WINDOW_MS = 5000;
-    const MIN_DISPATCH_MS = 40;
-    const TARGET_DISPATCH_MS = 160;
-    const MAX_DISPATCH_MS = 380;
 
-    let calibratedDispatchKeys = hardware.recommendedDispatchKeys ?? WEBGPU_INITIAL_SLICE;
+    let calibratedMaxKeys = hardware.recommendedDispatchKeys ?? WEBGPU_INITIAL_SLICE;
     try {
-      const saved = parseInt(localStorage.getItem(CALIBRATION_KEY) ?? '0', 10);
-      if (Number.isFinite(saved) && saved >= WEBGPU_MIN_SLICE && saved <= WEBGPU_MAX_SLICE) {
-        calibratedDispatchKeys = saved;
+      const savedMax = parseInt(localStorage.getItem(MAX_CALIBRATION_STORAGE_KEY) ?? '0', 10);
+      if (Number.isFinite(savedMax) && savedMax >= WEBGPU_MIN_SLICE && savedMax <= WEBGPU_MAX_SLICE) {
+        calibratedMaxKeys = savedMax;
+      }
+    } catch {
+      // ignore storage errors
+    }
+
+    let calibratedSmoothKeys = Math.min(calibratedMaxKeys, 2 * WEBGPU_UNIT_SLICE);
+    try {
+      const savedSmooth = parseInt(
+        localStorage.getItem(SMOOTH_CALIBRATION_STORAGE_KEY) ?? '0',
+        10,
+      );
+      if (
+        Number.isFinite(savedSmooth) &&
+        savedSmooth >= WEBGPU_MIN_SLICE &&
+        savedSmooth <= WEBGPU_MAX_SLICE
+      ) {
+        calibratedSmoothKeys = savedSmooth;
       }
     } catch {
       // ignore storage errors
@@ -1035,7 +1077,9 @@ export default function App() {
           if (checked > 0) {
             setCurrentKeyHex('0x' + (batchStartBig + BigInt(checked - 1)).toString(16));
           }
-          await new Promise<void>((r) => setTimeout(r, 0));
+          await yieldToBrowserUi();
+        } else if (getComputeProfileConfig(computeProfileRef.current).yieldEveryDispatch) {
+          await yieldToBrowserUi();
         }
       };
 
@@ -1045,7 +1089,7 @@ export default function App() {
         let lastCompletedAt = 0;
         const pipelineQueue: WebGPUPendingDispatch[] = [];
 
-        const tryEnqueueGpu = async (): Promise<boolean> => {
+        const tryEnqueueGpu = async (desiredKeys: number): Promise<boolean> => {
           if (!runningRef.current) return false;
           const unsubmitted = block.totalKeys - submittedOffset;
           if (unsubmitted < WEBGPU_MIN_SLICE) return false;
@@ -1055,7 +1099,7 @@ export default function App() {
             slotIndex: nextSlot,
             startKey: batchStart,
             maxCount: unsubmitted,
-            desiredDispatchKeys: calibratedDispatchKeys,
+            desiredDispatchKeys: desiredKeys,
             targetHash160Hex: PUZZLE_71_HASH160_HEX,
           });
           if (!pending) return false;
@@ -1073,9 +1117,14 @@ export default function App() {
         };
 
         while (runningRef.current) {
+          const activeProfile = computeProfileRef.current;
+          const profileCfg = getComputeProfileConfig(activeProfile);
+          const activeDesiredKeys =
+            activeProfile === 'smooth' ? calibratedSmoothKeys : calibratedMaxKeys;
+
           try {
             if (pipelineQueue.length === 0) {
-              await tryEnqueueGpu();
+              await tryEnqueueGpu(activeDesiredKeys);
               if (pipelineQueue.length === 0) {
                 const remaining = block.totalKeys - offset;
                 if (remaining > 0) {
@@ -1111,9 +1160,9 @@ export default function App() {
               }
             }
 
-            // Keep 2nd buffer slot in-flight in the GPU queue while waiting on the 1st slot
-            if (pipelineQueue.length < 2) {
-              await tryEnqueueGpu();
+            // Keep 2nd buffer slot in-flight in Max mode; single slot in Smooth mode so UI/scroll paints promptly
+            if (pipelineQueue.length < profileCfg.pipelineDepth) {
+              await tryEnqueueGpu(activeDesiredKeys);
             }
 
             const head = pipelineQueue.shift();
@@ -1135,28 +1184,35 @@ export default function App() {
             lastCompletedAt = sliceRes.completedAt;
 
             const unsubmitted = block.totalKeys - submittedOffset;
-            if (sliceRes.checked >= WEBGPU_MIN_SLICE) {
-              let next = calibratedDispatchKeys;
-              if (gpuSpanMs > MAX_DISPATCH_MS) {
-                next = Math.max(WEBGPU_MIN_SLICE, Math.floor(calibratedDispatchKeys / 2));
-              } else if (unsubmitted >= calibratedDispatchKeys || sliceRes.checked >= calibratedDispatchKeys) {
-                const base = Math.max(calibratedDispatchKeys, sliceRes.checked);
-                if (gpuSpanMs < MIN_DISPATCH_MS) {
-                  next = Math.min(WEBGPU_MAX_SLICE, base * 2);
-                } else if (gpuSpanMs < TARGET_DISPATCH_MS) {
-                  next = Math.min(
-                    WEBGPU_MAX_SLICE,
-                    Math.max(base + WEBGPU_UNIT_SLICE, Math.floor(base * 1.25)),
-                  );
-                }
+            const postProfile = computeProfileRef.current;
+            const postCfg = getComputeProfileConfig(postProfile);
+            const prevCalibrated =
+              postProfile === 'smooth' ? calibratedSmoothKeys : calibratedMaxKeys;
+            const nextCalibrated = computeNextDispatchKeys({
+              currentKeys: prevCalibrated,
+              lastChecked: sliceRes.checked,
+              unsubmittedKeys: unsubmitted,
+              gpuSpanMs,
+              minSlice: WEBGPU_MIN_SLICE,
+              unitSlice: WEBGPU_UNIT_SLICE,
+              maxSlice: WEBGPU_MAX_SLICE,
+              config: postCfg,
+            });
+            if (nextCalibrated !== prevCalibrated) {
+              if (postProfile === 'smooth') {
+                calibratedSmoothKeys = nextCalibrated;
+              } else {
+                calibratedMaxKeys = nextCalibrated;
               }
-              if (next !== calibratedDispatchKeys) {
-                calibratedDispatchKeys = next;
-                try {
-                  localStorage.setItem(CALIBRATION_KEY, String(next));
-                } catch {
-                  // ignore storage errors
-                }
+              try {
+                localStorage.setItem(
+                  postProfile === 'smooth'
+                    ? SMOOTH_CALIBRATION_STORAGE_KEY
+                    : MAX_CALIBRATION_STORAGE_KEY,
+                  String(nextCalibrated),
+                );
+              } catch {
+                // ignore storage errors
               }
             }
 
@@ -1176,12 +1232,23 @@ export default function App() {
             submittedOffset = offset;
             nextSlot = 0;
             lastCompletedAt = 0;
-            calibratedDispatchKeys = Math.max(
+            const errProfile = computeProfileRef.current;
+            const shrunk = Math.max(
               WEBGPU_MIN_SLICE,
-              Math.floor(calibratedDispatchKeys / 8),
+              Math.floor((errProfile === 'smooth' ? calibratedSmoothKeys : calibratedMaxKeys) / 8),
             );
+            if (errProfile === 'smooth') {
+              calibratedSmoothKeys = shrunk;
+            } else {
+              calibratedMaxKeys = shrunk;
+            }
             try {
-              localStorage.setItem(CALIBRATION_KEY, String(calibratedDispatchKeys));
+              localStorage.setItem(
+                errProfile === 'smooth'
+                  ? SMOOTH_CALIBRATION_STORAGE_KEY
+                  : MAX_CALIBRATION_STORAGE_KEY,
+                String(shrunk),
+              );
             } catch {
               // ignore storage errors
             }
@@ -1224,11 +1291,14 @@ export default function App() {
             continue;
           }
 
+          const profileCfg = getComputeProfileConfig(computeProfileRef.current);
           const sliceRes = await runComputeSlice({
             mode: 'cpu',
             startKey: startBig,
             maxCount: remaining,
             targetHash160Hex: PUZZLE_71_HASH160_HEX,
+            maxThreads: profileCfg.cpuThreads,
+            sliceKeysPerWorker: profileCfg.cpuSliceKeysPerWorker,
           });
 
           if (sliceRes.foundKey !== null) {
@@ -1354,6 +1424,7 @@ export default function App() {
             sessionData={sessionData}
             currentDeviceId={deviceId}
             hardware={hardware}
+            computeProfile={computeProfile}
             isProbingHardware={isProbingHardware}
             isUpdatingStrategy={isUpdatingStrategy}
             isRunning={isRunning}
@@ -1371,6 +1442,7 @@ export default function App() {
             networkInfo={networkInfo}
             engineError={engineError}
             onToggleRun={handleToggleRun}
+            onChangeComputeProfile={handleChangeComputeProfile}
             onRetryWebGPU={probeHardware}
             onUpdateStrategy={handleUpdateStrategy}
             onRunDemoPuzzle5={handleRunDemoPuzzle5}

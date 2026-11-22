@@ -5,6 +5,7 @@ import { BLOCK_SIZE, PUZZLE_71_TOTAL_KEYS } from '../shared/puzzle71.ts';
 import {
   calculateKeyspaceProgressPercent,
   estimateFullKeyspaceSeconds,
+  formatCalculatorDuration,
   formatCzechDurationFromSeconds,
   formatDurationFromSeconds,
   formatKeyspaceProgressPercent,
@@ -69,4 +70,19 @@ test('estimateFullKeyspaceSeconds and formatDurationFromSeconds produce accurate
   assert.equal(formatDurationFromSeconds(300, 'en'), '5.0 min');
   assert.equal(formatDurationFromSeconds(7200, 'en'), '2.0 hr');
   assert.equal(formatCzechDurationFromSeconds(7200), '2,0 hod');
+});
+
+test('formatCalculatorDuration avoids scientific notation for millions through trillions of years', () => {
+  const secPerYear = 365.25 * 86_400;
+
+  assert.equal(formatCalculatorDuration(0, 'cs'), '∞');
+  assert.equal(formatCalculatorDuration(0.4, 'cs'), '< 1 s');
+  assert.equal(formatCalculatorDuration(4.47, 'cs'), '4,5 s');
+  assert.equal(formatCalculatorDuration(6.24e6 * secPerYear, 'cs'), '6,24 mil. let');
+  assert.equal(formatCalculatorDuration(6.24e6 * secPerYear, 'en'), '6.24 M yrs');
+  assert.equal(formatCalculatorDuration(12.34e9 * secPerYear, 'cs'), '12,34 mld. let');
+  assert.equal(formatCalculatorDuration(8.5e12 * secPerYear, 'cs'), '8,50 bil. let');
+  assert.equal(formatCalculatorDuration(4.2e15 * secPerYear, 'cs'), '4,20 bld. let');
+  assert.equal(formatCalculatorDuration(7.1e18 * secPerYear, 'cs'), '7,10 tril. let');
+  assert.equal(formatCalculatorDuration(1.23e22 * secPerYear, 'cs'), '1,23e+22 let');
 });

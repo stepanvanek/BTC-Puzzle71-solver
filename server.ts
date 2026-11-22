@@ -654,16 +654,41 @@ async function startServer() {
     viteReadyPromise = (async () => {
       try {
         const { createServer: createViteServer } = await import('vite');
-        const hmrDisabled = process.env.DISABLE_HMR === 'true';
+        const hmrDisabled =
+          process.env.DISABLE_HMR === 'true' ||
+          Boolean(process.env.APPLET_ID) ||
+          Boolean(process.env.NG_ALLOWED_HOSTS);
         viteServer = await createViteServer({
+          plugins: hmrDisabled
+            ? [
+                {
+                  name: 'disable-vite-client-hmr-ws',
+                  enforce: 'post',
+                  transform(code, id) {
+                    const normalizedId = id.replace(/\\/g, '/');
+                    if (
+                      normalizedId.endsWith('/vite/dist/client/client.mjs') &&
+                      code.includes('createWebSocketModuleRunnerTransport({')
+                    ) {
+                      const patched = code.replace(
+                        /let\s+wsTransport\s*=\s*createWebSocketModuleRunnerTransport\(\{[\s\S]*?\}\);/,
+                        'let wsTransport = { async connect() {}, disconnect() {}, send() {} };'
+                      );
+                      if (patched !== code) {
+                        return { code: patched, map: null };
+                      }
+                    }
+                    return null;
+                  },
+                },
+              ]
+            : [],
           server: {
             middlewareMode: true,
             allowedHosts: true,
-            ws: {
-              server: httpServer,
-              timeout: 15_000,
-            },
-            hmr: !hmrDisabled,
+            hmr: hmrDisabled ? false : { server: httpServer },
+            ws: hmrDisabled ? false : undefined,
+            watch: hmrDisabled ? null : undefined,
           },
           appType: 'spa',
         });
@@ -674,7 +699,12 @@ async function startServer() {
     })();
   }
 
+  let isShuttingDown = false;
   const shutdown = async () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    const forceTimer = setTimeout(() => process.exit(0), 500);
+    forceTimer.unref();
     try {
       if (viteServer) {
         await viteServer.close();
@@ -687,16 +717,23 @@ async function startServer() {
     } catch {
       // ignore
     }
+    try {
+      httpServer.closeAllConnections?.();
+    } catch {
+      // ignore
+    }
     httpServer.close(() => {
       process.exit(0);
     });
-    setTimeout(() => process.exit(0), 2000).unref();
   };
 
   process.once('SIGINT', () => {
     void shutdown();
   });
   process.once('SIGTERM', () => {
+    void shutdown();
+  });
+  process.once('SIGHUP', () => {
     void shutdown();
   });
 }

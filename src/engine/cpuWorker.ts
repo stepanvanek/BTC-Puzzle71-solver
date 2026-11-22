@@ -1,6 +1,8 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
+import { privateKeyToHash160Hex } from '../shared/btcTx.ts';
+import { createIncrementalBasePointCursor } from './computeProfile.ts';
 
 export interface CpuScanBatchRequest {
   type: 'scan';
@@ -15,6 +17,35 @@ export interface CpuScanBatchResult {
   id?: number;
   checked: number;
   foundKeyHex: string | null;
+  powKeysHex: string[];
+}
+
+export interface DeriveAffineRequest {
+  type: 'derive_affine';
+  id: number;
+  startKeyHex: string;
+}
+
+export interface DeriveAffineResult {
+  type: 'derive_affine_result';
+  id: number;
+  xBytes: Uint8Array;
+  yBytes: Uint8Array;
+}
+
+export interface VerifyCandidatesRequest {
+  type: 'verify_candidates';
+  id: number;
+  targetHash160Hex: string;
+  powPrefix: string;
+  hitCandidatesHex: string[];
+  powCandidatesHex: string[];
+}
+
+export interface VerifyCandidatesResult {
+  type: 'verify_candidates_result';
+  id: number;
+  matchedKeyHex: string | null;
   powKeysHex: string[];
 }
 
@@ -259,17 +290,63 @@ function hexToBytes(h: string): Uint8Array {
 
 // Web Worker message handler
 if (typeof self !== 'undefined' && typeof (self as unknown as Worker).postMessage === 'function') {
-  self.onmessage = (ev: MessageEvent<CpuScanBatchRequest>) => {
-    if (ev.data?.type === 'scan') {
-      const startKey = BigInt(ev.data.startKeyHex);
-      const targetBytes = hexToBytes(ev.data.targetHash160Hex);
-      const res = scanCpuBatch(startKey, ev.data.count, targetBytes);
+  const gpuPointCursor = createIncrementalBasePointCursor();
+
+  self.onmessage = (
+    ev: MessageEvent<CpuScanBatchRequest | DeriveAffineRequest | VerifyCandidatesRequest>,
+  ) => {
+    const msg = ev.data;
+    if (!msg) return;
+
+    if (msg.type === 'scan') {
+      const startKey = BigInt(msg.startKeyHex);
+      const targetBytes = hexToBytes(msg.targetHash160Hex);
+      const res = scanCpuBatch(startKey, msg.count, targetBytes);
       const payload: CpuScanBatchResult = {
         type: 'result',
-        id: ev.data.id,
+        id: msg.id,
         checked: res.checked,
         foundKeyHex: res.foundKey !== null ? '0x' + res.foundKey.toString(16) : null,
         powKeysHex: res.powKeys.map((k) => '0x' + k.toString(16)),
+      };
+      (self as unknown as Worker).postMessage(payload);
+      return;
+    }
+
+    if (msg.type === 'derive_affine') {
+      const startKey = BigInt(msg.startKeyHex);
+      const aff = gpuPointCursor.deriveAffine(startKey);
+      const payload: DeriveAffineResult = {
+        type: 'derive_affine_result',
+        id: msg.id,
+        xBytes: aff.xBytes,
+        yBytes: aff.yBytes,
+      };
+      (self as unknown as Worker).postMessage(payload, [aff.xBytes.buffer, aff.yBytes.buffer]);
+      return;
+    }
+
+    if (msg.type === 'verify_candidates') {
+      const powKeysHex: string[] = [];
+      for (const hexKey of msg.powCandidatesHex) {
+        if (privateKeyToHash160Hex(BigInt(hexKey)).startsWith(msg.powPrefix)) {
+          powKeysHex.push(hexKey);
+        }
+      }
+
+      let matchedKeyHex: string | null = null;
+      for (const hexKey of msg.hitCandidatesHex) {
+        if (privateKeyToHash160Hex(BigInt(hexKey)) === msg.targetHash160Hex) {
+          matchedKeyHex = hexKey;
+          break;
+        }
+      }
+
+      const payload: VerifyCandidatesResult = {
+        type: 'verify_candidates_result',
+        id: msg.id,
+        matchedKeyHex,
+        powKeysHex,
       };
       (self as unknown as Worker).postMessage(payload);
     }

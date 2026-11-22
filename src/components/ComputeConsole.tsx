@@ -1,7 +1,8 @@
-import { AlertTriangle, Check, Clock, Compass, Copy, Cpu, FlaskConical, ListOrdered, Pause, Play, QrCode, RefreshCw, ShieldCheck, Shuffle } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Compass, Copy, Cpu, FlaskConical, Gauge, ListOrdered, Pause, Play, QrCode, RefreshCw, ShieldCheck, Shuffle, Zap } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useMemo, useState } from 'react';
 import type { HardwareCapabilities } from '../engine/computeEngine.ts';
+import { type ComputeProfile, getCpuThreadsForProfile } from '../engine/computeProfile.ts';
 import { useLocale } from '../i18n/LocaleContext.tsx';
 import { formatLocalizedDecimal, formatLocalizedNumber } from '../i18n/locale.ts';
 import { calculatePayoutSplit, formatBtcFromSats } from '../shared/btcAddress.ts';
@@ -38,6 +39,7 @@ interface ComputeConsoleProps {
   sessionData: SessionData;
   currentDeviceId?: string;
   hardware: HardwareCapabilities | null;
+  computeProfile?: ComputeProfile;
   isProbingHardware?: boolean;
   isUpdatingStrategy?: boolean;
   isRunning: boolean;
@@ -59,6 +61,7 @@ interface ComputeConsoleProps {
   networkInfo: PuzzleNetworkInfo | null;
   engineError: string | null;
   onToggleRun: () => void;
+  onChangeComputeProfile?: (profile: ComputeProfile) => void;
   onRetryWebGPU?: () => void;
   onUpdateStrategy?: (blockMode: 'random' | 'sequential', startPercent?: number) => Promise<void> | void;
   onRunDemoPuzzle5?: () => Promise<void> | void;
@@ -75,6 +78,7 @@ export function ComputeConsole({
   sessionData,
   currentDeviceId,
   hardware,
+  computeProfile = 'max',
   isProbingHardware = false,
   isUpdatingStrategy = false,
   isRunning,
@@ -92,6 +96,7 @@ export function ComputeConsole({
   networkInfo,
   engineError,
   onToggleRun,
+  onChangeComputeProfile,
   onRetryWebGPU,
   onUpdateStrategy,
   onRunDemoPuzzle5,
@@ -342,7 +347,50 @@ export function ComputeConsole({
             </p>
           </div>
 
-          <div className="shrink-0">
+          <div className="shrink-0 flex flex-col items-stretch sm:items-end gap-2.5">
+            <div
+              role="group"
+              aria-label={isCs ? 'Výkonnostní profil výpočtu' : 'Compute performance profile'}
+              className="grid grid-cols-2 rounded-lg border border-[#222938] bg-[#0B0E15] p-1 gap-1"
+            >
+              <button
+                type="button"
+                aria-pressed={computeProfile === 'max'}
+                onClick={() => onChangeComputeProfile?.('max')}
+                title={
+                  isCs
+                    ? 'Plný výkon GPU (2 fronty, 160 ms) / 100 % CPU vláken'
+                    : 'Full GPU queue (2 slots, 160 ms) / 100% CPU threads'
+                }
+                className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  computeProfile === 'max'
+                    ? 'bg-[#241B10] text-[#F7931A] border border-[#F7931A]/50'
+                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                }`}
+              >
+                <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>Max</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={computeProfile === 'smooth'}
+                onClick={() => onChangeComputeProfile?.('smooth')}
+                title={
+                  isCs
+                    ? 'Plynulé posouvání prohlížeče bez mezer (1 GPU fronta ~18 ms / volná jádra CPU)'
+                    : 'Smooth browser scrolling with zero idle sleeps (1 GPU slot ~18 ms / spare CPU cores)'
+                }
+                className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                  computeProfile === 'smooth'
+                    ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/45'
+                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                }`}
+              >
+                <Gauge className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>Smooth</span>
+              </button>
+            </div>
+
             <button
               type="button"
               disabled={!isHardwareReady || isBusyStarting}
@@ -390,6 +438,16 @@ export function ComputeConsole({
                 </>
               )}
             </button>
+
+            <p className="text-[11px] text-slate-400 sm:text-right">
+              {computeProfile === 'smooth'
+                ? isCs
+                  ? 'Smooth: 1 GPU fronta (~18 ms) / volná CPU jádra pro plynulý scroll'
+                  : 'Smooth: 1 GPU slot (~18 ms) / spare CPU cores for responsive scrolling'
+                : isCs
+                  ? 'Max: plný výkon GPU (2 fronty, 160 ms) / 100 % CPU vláken'
+                  : 'Max: full GPU throughput (2 slots, 160 ms) / 100% CPU threads'}
+            </p>
           </div>
         </div>
 
@@ -698,8 +756,8 @@ export function ComputeConsole({
             className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[#0B0E15] border border-[#1E2534]"
           >
             <div
-              className="h-full bg-[#F7931A] transition-all duration-200"
-              style={{ width: `${blockProgressPct}%` }}
+              className="h-full w-full origin-left bg-[#F7931A] will-change-transform transition-transform duration-200"
+              style={{ transform: `scaleX(${Math.max(0, Math.min(1, blockProgressPct / 100))})` }}
             />
           </div>
 
@@ -744,7 +802,7 @@ export function ComputeConsole({
               <p className="mt-0.5 font-mono text-[11px] text-slate-500 tabular-nums">
                 {dispatchTelemetry.workgroups > 0
                   ? `${dispatchTelemetry.workgroups} wg · ${formatLocalizedNumber(dispatchTelemetry.checked, locale)} ${isCs ? 'klíčů' : 'keys'} (${Math.round(dispatchTelemetry.elapsedMs)} ms)`
-                  : `${isCs ? `CPU dávka (${hardware?.cpuThreads ?? 1} vláken)` : `CPU batch (${hardware?.cpuThreads ?? 1} threads)`} · ${formatLocalizedNumber(dispatchTelemetry.checked, locale)} ${isCs ? 'klíčů' : 'keys'} (${Math.round(dispatchTelemetry.elapsedMs)} ms)`}
+                  : `${isCs ? `CPU dávka (${getCpuThreadsForProfile(computeProfile, hardware?.cpuThreads)} vláken)` : `CPU batch (${getCpuThreadsForProfile(computeProfile, hardware?.cpuThreads)} threads)`} · ${formatLocalizedNumber(dispatchTelemetry.checked, locale)} ${isCs ? 'klíčů' : 'keys'} (${Math.round(dispatchTelemetry.elapsedMs)} ms)`}
               </p>
             )}
           </div>
@@ -797,12 +855,13 @@ export function ComputeConsole({
             </p>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#141925] border border-[#1E2534]">
               <div
-                className="h-full bg-emerald-400 transition-all duration-300"
+                className="h-full w-full origin-left bg-emerald-400 will-change-transform transition-transform duration-300"
                 style={{
-                  width:
+                  transform: `scaleX(${
                     totalCheckedWithCurrent > 0
-                      ? `${Math.max(0.6, Math.min(100, fullKeyspaceProgressPct))}%`
-                      : '0%',
+                      ? Math.max(0.006, Math.min(1, fullKeyspaceProgressPct / 100))
+                      : 0
+                  })`,
                 }}
               />
             </div>

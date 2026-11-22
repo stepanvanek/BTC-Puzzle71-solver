@@ -1,5 +1,5 @@
 import { Activity } from 'lucide-react';
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import {
   Area,
   AreaChart,
@@ -49,7 +49,7 @@ function SpeedTooltip({ active, payload }: CustomTooltipProps) {
   );
 }
 
-export function SpeedHistoryChart({
+export const SpeedHistoryChart = memo(function SpeedHistoryChart({
   history,
   isRunning,
   onlineDevicesCount = 0,
@@ -246,4 +246,4 @@ export function SpeedHistoryChart({
       )}
     </section>
   );
-}
+});

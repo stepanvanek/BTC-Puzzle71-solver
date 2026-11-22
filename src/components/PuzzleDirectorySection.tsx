@@ -1,96 +1,20 @@
 import { Calculator, CheckCircle2, ExternalLink, Lock, Search, Sparkles, Unlock } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import type { Locale } from '../i18n/locale.ts';
+import {
+  BITCOIN_PUZZLE_CHALLENGE_SUMMARY,
+  BITCOIN_PUZZLE_LIST,
+  calculatePuzzleOddsAndEta,
+  formatBitRangeLabel,
+  getBitcoinPuzzleTimeline,
+  getPuzzleNote,
+} from '../data/bitcoinPuzzles.ts';
 import { useLocale } from '../i18n/LocaleContext.tsx';
 import {
   formatLocalizedDecimal,
   formatLocalizedFloatString,
   formatLocalizedNumber,
 } from '../i18n/locale.ts';
-import { BLOCK_SIZE } from '../shared/puzzle71.ts';
-
-interface PuzzleRecord {
-  bits: number;
-  address: string;
-  hexStart: string;
-  hexEnd: string;
-  rewardBtc: number;
-  pubkeyExposed: boolean;
-  status: 'solved' | 'active' | 'unsolved';
-  solvedPercent?: number;
-  solvedDate?: string;
-  solvedKeyHex?: string;
-  note: string;
-}
-
-const BITCOIN_PUZZLE_LIST: PuzzleRecord[] = [];
-
-const BITCOIN_PUZZLE_CHALLENGE_SUMMARY = {
-  totalSeriesBtc: 988.498,
-  creatorAlias: 'saatoshi_rising',
-  totalPuzzles: 160,
-  createdDate: '2015-01-15',
-  solvedCount: 83,
-  unsolvedCount: 77,
-  averageFoundPercent: 50,
-  remainingBtc: '903',
-  solvedBtc: 85.498,
-  exposedUnsolvedCount: 15,
-};
-
-function formatBitRangeLabel(bits: number): string {
-  return bits <= 1 ? '2⁰ (1)' : `2^${bits - 1} → 2^${bits}−1`;
-}
-
-function calculatePuzzleOddsAndEta(params: { bitWidth: number; keysPerSec: number }) {
-  const bits = Math.max(1, Math.min(160, Math.floor(params.bitWidth)));
-  const totalKeys = Math.pow(2, bits - 1);
-  const blockSize = Number(BLOCK_SIZE);
-  const fitsInsideSingleBlock = totalKeys <= blockSize;
-  const effectiveBlockKeys = fitsInsideSingleBlock ? totalKeys : blockSize;
-  const blockCount = fitsInsideSingleBlock ? 1 : Math.ceil(totalKeys / blockSize);
-  const rate = params.keysPerSec > 0 ? params.keysPerSec : 0;
-  const secondsPerBlock = rate > 0 ? effectiveBlockKeys / rate : Infinity;
-  const fullSeconds100Pct = rate > 0 ? totalKeys / rate : Infinity;
-  const medianSeconds50Pct = fullSeconds100Pct * 0.5;
-  const kangarooOpsEstimate = Math.sqrt(totalKeys);
-  const kangarooSecondsEstimate = rate > 0 ? kangarooOpsEstimate / rate : Infinity;
-  return {
-    fitsInsideSingleBlock,
-    effectiveBlockKeys,
-    blockCount,
-    secondsPerBlock,
-    medianSeconds50Pct,
-    fullSeconds100Pct,
-    kangarooOpsEstimate,
-    kangarooSecondsEstimate,
-  };
-}
-
-function formatLongDuration(seconds: number, locale: Locale): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return '∞';
-  if (seconds < 1) return locale === 'cs' ? '< 1 s' : '< 1s';
-  if (seconds < 60) return `${seconds.toFixed(1)} s`;
-  const mins = seconds / 60;
-  if (mins < 60) return `${mins.toFixed(1)} min`;
-  const hours = mins / 60;
-  if (hours < 24) return locale === 'cs' ? `${hours.toFixed(1)} hod` : `${hours.toFixed(1)} hrs`;
-  const days = hours / 24;
-  if (days < 365.25) return locale === 'cs' ? `${days.toFixed(1)} dní` : `${days.toFixed(1)} days`;
-  const years = days / 365.25;
-  if (years < 1e6) {
-    return `${formatLocalizedDecimal(years, years < 100 ? 1 : 0, locale)} ${locale === 'cs' ? 'let' : 'yrs'}`;
-  }
-  return `${years.toExponential(2)} ${locale === 'cs' ? 'let' : 'yrs'}`;
-}
-
-function getBitcoinPuzzleTimeline(_locale: Locale): Array<{ date: string; title: string; description: string }> {
-  return [];
-}
-
-function getPuzzleNote(item: PuzzleRecord, _locale: Locale): string {
-  return item.note;
-}
+import { formatCalculatorDuration } from '../utils/keyspaceStats.ts';
 
 interface PuzzleDirectorySectionProps {
   compact?: boolean;
@@ -340,15 +264,7 @@ export function PuzzleDirectorySection({
               onChange={(e) => setSelectedBits(Number(e.target.value))}
               className="w-full rounded-lg border border-[#283144] bg-[#11151E] px-3 py-2 text-xs font-mono text-slate-100 focus:border-[#F7931A] focus:outline-none"
             >
-              {(BITCOIN_PUZZLE_LIST.length > 0
-                ? BITCOIN_PUZZLE_LIST
-                : Array.from({ length: 160 }, (_, idx) => ({
-                    bits: idx + 1,
-                    rewardBtc: idx + 1 === 71 ? 7.1 : 0,
-                    pubkeyExposed: idx + 1 >= 140 && (idx + 1) % 5 === 0,
-                    status: (idx + 1 === 71 ? 'active' : 'unsolved') as 'active' | 'unsolved',
-                  }))
-              ).map((p) => {
+              {BITCOIN_PUZZLE_LIST.map((p) => {
                 const rewardStr = p.rewardBtc > 0 ? formatLocalizedFloatString(p.rewardBtc, locale) : '';
                 const stateTag =
                   p.status === 'active'
@@ -414,7 +330,7 @@ export function PuzzleDirectorySection({
                   : 'One block (2²⁹ = 536.87M keys)'}
             </p>
             <p className="mt-1 font-mono text-sm font-semibold text-slate-100">
-              {formatLongDuration(etaResult.secondsPerBlock, locale)}
+              {formatCalculatorDuration(etaResult.secondsPerBlock, locale)}
             </p>
             <p className="text-[11px] text-slate-500 mt-0.5">
               {etaResult.fitsInsideSingleBlock
@@ -431,7 +347,7 @@ export function PuzzleDirectorySection({
               {isCs ? 'Mediánová doba (50 % prostoru)' : 'Median time (50% keyspace)'}
             </p>
             <p className="mt-1 font-mono text-sm font-semibold text-[#F7931A]">
-              {formatLongDuration(etaResult.medianSeconds50Pct, locale)}
+              {formatCalculatorDuration(etaResult.medianSeconds50Pct, locale)}
             </p>
             <p className="text-[11px] text-slate-500 mt-0.5">
               {isCs ? 'Statistická střední hodnota' : 'Statistical midpoint'}
@@ -442,7 +358,7 @@ export function PuzzleDirectorySection({
               {isCs ? 'Projít celý prostor (100 %)' : 'Full space traversal (100%)'}
             </p>
             <p className="mt-1 font-mono text-sm font-semibold text-slate-100">
-              {formatLongDuration(etaResult.fullSeconds100Pct, locale)}
+              {formatCalculatorDuration(etaResult.fullSeconds100Pct, locale)}
             </p>
             <p className="text-[11px] text-slate-500 mt-0.5">
               {isCs
@@ -462,7 +378,7 @@ export function PuzzleDirectorySection({
                 <span className="font-mono">O(√N) ≈ {etaResult.kangarooOpsEstimate.toExponential(2)}</span>{' '}
                 operací (u #{selectedBits} tedy řádově{' '}
                 <span className="font-mono">
-                  {formatLongDuration(etaResult.kangarooSecondsEstimate, locale)}
+                  {formatCalculatorDuration(etaResult.kangarooSecondsEstimate, locale)}
                 </span>{' '}
                 při dané rychlosti skoků).
               </>
@@ -471,7 +387,7 @@ export function PuzzleDirectorySection({
                 <strong>Exposed PubKey Note:</strong> Puzzle #{selectedBits} has had an exposed public
                 key since 2019. ECDLP solvers (Pollard’s Kangaroo) reduce work from brute force to
                 roughly <span className="font-mono">O(√N) ≈ {etaResult.kangarooOpsEstimate.toExponential(2)}</span>{' '}
-                operations (~<span className="font-mono">{formatLongDuration(etaResult.kangarooSecondsEstimate, locale)}</span>{' '}
+                operations (~<span className="font-mono">{formatCalculatorDuration(etaResult.kangarooSecondsEstimate, locale)}</span>{' '}
                 for #{selectedBits} at this step rate).
               </>
             )}

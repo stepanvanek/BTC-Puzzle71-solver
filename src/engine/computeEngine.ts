@@ -1,8 +1,13 @@
-import { secp256k1 } from '@noble/curves/secp256k1.js';
 import type { Locale } from '../i18n/locale.ts';
 import { privateKeyToHash160Hex } from '../shared/btcTx.ts';
 import { POW_HASH160_HEX_PREFIX, PUZZLE_71_HASH160_HEX } from '../shared/puzzle71.ts';
-import { scanCpuBatch, type CpuScanBatchResult } from './cpuWorker.ts';
+import { type AffinePointLE, createIncrementalBasePointCursor } from './computeProfile.ts';
+import {
+  type CpuScanBatchResult,
+  type DeriveAffineResult,
+  type VerifyCandidatesResult,
+  scanCpuBatch,
+} from './cpuWorker.ts';
 import {
   HEADER_BYTES,
   KEYS_PER_THREAD_DEFAULT,
@@ -16,7 +21,6 @@ import {
   buildKgTableBytes,
   buildOffsetTableBytes,
   hex20BytesToU32LE,
-  packU256LEBytes,
 } from './secp256k1.wgsl.ts';
 
 export type ComputeBackendMode = 'webgpu' | 'cpu';
@@ -145,6 +149,109 @@ export interface WebGPUPendingDispatch {
 
 let gpuCtx: WebGPUContext | null = null;
 let cachedKgTableBytes: Uint8Array | null = null;
+let gpuHelperWorker: Worker | null = null;
+let nextHelperJobId = 1;
+const fallbackPointCursor = createIncrementalBasePointCursor();
+
+function getGpuHelperWorker(): Worker | null {
+  if (typeof Worker === 'undefined') return null;
+  if (!gpuHelperWorker) {
+    gpuHelperWorker = new Worker(new URL('./cpuWorker.ts', import.meta.url), { type: 'module' });
+  }
+  return gpuHelperWorker;
+}
+
+async function deriveBaseAffineOffThread(startKey: bigint): Promise<AffinePointLE> {
+  const helper = getGpuHelperWorker();
+  if (!helper) {
+    return fallbackPointCursor.deriveAffine(startKey);
+  }
+  const id = nextHelperJobId++;
+  return new Promise<AffinePointLE>((resolve) => {
+    const onMsg = (ev: MessageEvent<DeriveAffineResult>) => {
+      if (ev.data?.type === 'derive_affine_result' && ev.data.id === id) {
+        helper.removeEventListener('message', onMsg);
+        helper.removeEventListener('error', onErr);
+        resolve({ xBytes: ev.data.xBytes, yBytes: ev.data.yBytes });
+      }
+    };
+    const onErr = () => {
+      helper.removeEventListener('message', onMsg);
+      helper.removeEventListener('error', onErr);
+      resolve(fallbackPointCursor.deriveAffine(startKey));
+    };
+    helper.addEventListener('message', onMsg);
+    helper.addEventListener('error', onErr);
+    helper.postMessage({
+      type: 'derive_affine',
+      id,
+      startKeyHex: '0x' + startKey.toString(16),
+    });
+  });
+}
+
+async function verifyCandidatesOffThread(
+  targetHash160Hex: string,
+  hitCandidates: bigint[],
+  powCandidates: bigint[],
+): Promise<{ foundKey: bigint | null; powKeys: bigint[] }> {
+  if (hitCandidates.length === 0 && powCandidates.length === 0) {
+    return { foundKey: null, powKeys: [] };
+  }
+
+  const verifySyncFallback = () => {
+    const powKeys: bigint[] = [];
+    for (const candidate of powCandidates) {
+      if (privateKeyToHash160Hex(candidate).startsWith(POW_HASH160_HEX_PREFIX)) {
+        powKeys.push(candidate);
+      }
+    }
+    let foundKey: bigint | null = null;
+    for (const candidate of hitCandidates) {
+      if (privateKeyToHash160Hex(candidate) === targetHash160Hex) {
+        foundKey = candidate;
+        break;
+      }
+    }
+    return { foundKey, powKeys };
+  };
+
+  const helper = getGpuHelperWorker();
+  if (!helper) {
+    return verifySyncFallback();
+  }
+
+  const id = nextHelperJobId++;
+  return new Promise((resolve) => {
+    const onMsg = (ev: MessageEvent<VerifyCandidatesResult>) => {
+      if (ev.data?.type === 'verify_candidates_result' && ev.data.id === id) {
+        helper.removeEventListener('message', onMsg);
+        helper.removeEventListener('error', onErr);
+        resolve({
+          foundKey: ev.data.matchedKeyHex ? BigInt(ev.data.matchedKeyHex) : null,
+          powKeys: Array.isArray(ev.data.powKeysHex)
+            ? ev.data.powKeysHex.map((h) => BigInt(h))
+            : [],
+        });
+      }
+    };
+    const onErr = () => {
+      helper.removeEventListener('message', onMsg);
+      helper.removeEventListener('error', onErr);
+      resolve(verifySyncFallback());
+    };
+    helper.addEventListener('message', onMsg);
+    helper.addEventListener('error', onErr);
+    helper.postMessage({
+      type: 'verify_candidates',
+      id,
+      targetHash160Hex,
+      powPrefix: POW_HASH160_HEX_PREFIX,
+      hitCandidatesHex: hitCandidates.map((k) => '0x' + k.toString(16)),
+      powCandidatesHex: powCandidates.map((k) => '0x' + k.toString(16)),
+    });
+  });
+}
 
 function getKgTableBytes(): Uint8Array {
   if (!cachedKgTableBytes) {
@@ -406,20 +513,20 @@ function ensureSlotOffsetTable(
   return slot.uploadedStride;
 }
 
-function submitWebGPUSlotInternal(
+async function submitWebGPUSlotInternal(
   ctx: WebGPUContext,
   slotIndex: 0 | 1,
   startKey: bigint,
   workgroups: number,
   keysPerThread: number,
   targetHash160Hex: string,
-): WebGPUPendingDispatch {
+): Promise<WebGPUPendingDispatch> {
   const slot = ctx.slots[slotIndex];
   const stride = ensureSlotOffsetTable(ctx, slot, keysPerThread);
 
-  const baseAffine = secp256k1.Point.BASE.multiply(startKey).toAffine();
-  slot.headerStaging.set(packU256LEBytes(baseAffine.x), 0);
-  slot.headerStaging.set(packU256LEBytes(baseAffine.y), 32);
+  const { xBytes, yBytes } = await deriveBaseAffineOffThread(startKey);
+  slot.headerStaging.set(xBytes, 0);
+  slot.headerStaging.set(yBytes, 32);
 
   if (slot.cachedTargetHex !== targetHash160Hex) {
     slot.cachedTargetHex = targetHash160Hex;
@@ -488,42 +595,36 @@ function submitWebGPUSlotInternal(
       slot.outputReadBuffer.unmap();
       const completedAt = performance.now();
 
-      const powKeys: bigint[] = [];
-      if (rawPowHits) {
-        for (const pHit of rawPowHits) {
-          const candidate = startKey + BigInt(pHit.threadId) * BigInt(stride) + BigInt(pHit.keyOffset);
-          if (privateKeyToHash160Hex(candidate).startsWith(POW_HASH160_HEX_PREFIX)) {
-            powKeys.push(candidate);
-          }
-        }
-      }
+      const powCandidates = rawPowHits
+        ? rawPowHits.map(
+            (pHit) => startKey + BigInt(pHit.threadId) * BigInt(stride) + BigInt(pHit.keyOffset),
+          )
+        : [];
+      const hitCandidates = hits
+        ? hits.map((hit) => startKey + BigInt(hit.threadId) * BigInt(stride) + BigInt(hit.keyOffset))
+        : [];
 
-      if (hits) {
-        for (const hit of hits) {
-          const candidate = startKey + BigInt(hit.threadId) * BigInt(stride) + BigInt(hit.keyOffset);
-          if (privateKeyToHash160Hex(candidate) === targetHash160Hex) {
-            return {
-              checked: totalChecked,
-              foundKey: candidate,
-              powKeys,
-              completedAt,
-              submittedAt,
-              workgroups,
-            };
-          }
+      const verified = await verifyCandidatesOffThread(
+        targetHash160Hex,
+        hitCandidates,
+        powCandidates,
+      );
+
+      if (hits && verified.foundKey === null) {
+        for (let i = 0; i < hits.length; i++) {
           console.error('REJECTED a GPU hit: CPU re-derivation disagrees.', {
-            threadId: hit.threadId,
-            keyOffset: hit.keyOffset,
+            threadId: hits[i].threadId,
+            keyOffset: hits[i].keyOffset,
             stride,
-            candidate: candidate.toString(16),
+            candidate: hitCandidates[i].toString(16),
           });
         }
       }
 
       return {
         checked: totalChecked,
-        foundKey: null,
-        powKeys,
+        foundKey: verified.foundKey,
+        powKeys: verified.powKeys,
         completedAt,
         submittedAt,
         workgroups,
@@ -573,7 +674,7 @@ async function runWebGPUBatch(
   elapsedMs: number;
   workgroups: number;
 }> {
-  const pending = submitWebGPUSlotInternal(
+  const pending = await submitWebGPUSlotInternal(
     ctx,
     0,
     startKey,
@@ -773,6 +874,8 @@ export async function runComputeSlice(params: {
   maxCount: number;
   desiredDispatchKeys?: number;
   targetHash160Hex?: string;
+  maxThreads?: number;
+  sliceKeysPerWorker?: number;
 }): Promise<{
   checked: number;
   foundKey: bigint | null;
@@ -808,9 +911,16 @@ export async function runComputeSlice(params: {
 
   const pool = getCpuWorkerPool();
   const t0 = performance.now();
+  const workerCap = Math.max(1, params.maxThreads ?? pool?.length ?? 1);
+  const keysPerWorker = Math.max(128, params.sliceKeysPerWorker ?? CPU_KEYS_PER_WORKER_SLICE);
+
   if (pool && pool.length > 0 && params.maxCount >= 256) {
-    const activeWorkers = Math.min(pool.length, Math.max(1, Math.floor(params.maxCount / 128)));
-    const totalSlice = Math.min(params.maxCount, activeWorkers * CPU_KEYS_PER_WORKER_SLICE);
+    const activeWorkers = Math.min(
+      pool.length,
+      workerCap,
+      Math.max(1, Math.floor(params.maxCount / 128)),
+    );
+    const totalSlice = Math.min(params.maxCount, activeWorkers * keysPerWorker);
     const perWorkerBase = Math.floor(totalSlice / activeWorkers);
     const remainder = totalSlice % activeWorkers;
 
@@ -839,7 +949,7 @@ export async function runComputeSlice(params: {
     return { checked: cursor, foundKey, powKeys, elapsedMs, workgroups: 0 };
   }
 
-  const sliceCount = Math.min(params.maxCount, CPU_KEYS_PER_WORKER_SLICE);
+  const sliceCount = Math.min(params.maxCount, keysPerWorker);
   const cpuRes = scanCpuBatch(params.startKey, sliceCount, hexToBytes(targetHex));
   return { ...cpuRes, elapsedMs: performance.now() - t0, workgroups: 0 };
 }
