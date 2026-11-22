@@ -34,6 +34,7 @@ import {
 } from './engine/computeEngine.ts';
 import {
   type ComputeProfile,
+  canChangeComputeProfile,
   computeNextDispatchKeys,
   getComputeProfileConfig,
   loadSavedComputeProfile,
@@ -102,6 +103,18 @@ async function yieldToBrowserUi(): Promise<void> {
   const navScheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
   if (typeof navScheduler?.yield === 'function') {
     await navScheduler.yield();
+    return;
+  }
+  if (typeof MessageChannel !== 'undefined') {
+    await new Promise<void>((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        channel.port1.close();
+        channel.port2.close();
+        resolve();
+      };
+      channel.port2.postMessage(null);
+    });
     return;
   }
   await new Promise<void>((r) => setTimeout(r, 0));
@@ -177,11 +190,17 @@ export default function App() {
   );
   const computeProfileRef = useRef<ComputeProfile>(computeProfile);
 
-  const handleChangeComputeProfile = useCallback((nextProfile: ComputeProfile) => {
-    computeProfileRef.current = nextProfile;
-    setComputeProfile(nextProfile);
-    saveComputeProfile(nextProfile);
-  }, []);
+  const handleChangeComputeProfile = useCallback(
+    (nextProfile: ComputeProfile) => {
+      if (runningRef.current || !canChangeComputeProfile(isRunning, isBusyStarting)) {
+        return;
+      }
+      computeProfileRef.current = nextProfile;
+      setComputeProfile(nextProfile);
+      saveComputeProfile(nextProfile);
+    },
+    [isRunning, isBusyStarting],
+  );
 
   const [isProbingHardware, setIsProbingHardware] = useState(false);
   const [isUpdatingStrategy, setIsUpdatingStrategy] = useState(false);
@@ -776,7 +795,8 @@ export default function App() {
     let calibratedMaxKeys =
       calibratedMaxKeysRef.current ?? hardware.recommendedDispatchKeys ?? WEBGPU_INITIAL_SLICE;
     let calibratedSmoothKeys =
-      calibratedSmoothKeysRef.current ?? Math.min(calibratedMaxKeys, 2 * WEBGPU_UNIT_SLICE);
+      calibratedSmoothKeysRef.current ??
+      Math.max(WEBGPU_MIN_SLICE, Math.floor(calibratedMaxKeys / 2));
 
     const leaseNextBatch = async (): Promise<LeasedBlockPayload> => {
       const measuredRate = lastMeasuredRateRef.current;

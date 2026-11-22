@@ -19,6 +19,10 @@ export interface ComputeProfileConfig {
   yieldEveryDispatch: boolean;
 }
 
+export function canChangeComputeProfile(isRunning: boolean, isBusyStarting: boolean): boolean {
+  return !isRunning && !isBusyStarting;
+}
+
 export function getCpuThreadsForProfile(
   profile: ComputeProfile,
   hardwareConcurrency?: number,
@@ -35,10 +39,12 @@ export function getCpuThreadsForProfile(
     return fullCount;
   }
 
-  // Smooth profile reserves 1-2 CPU cores so browser scrolling, touch & OS UI never starve
-  if (fullCount <= 2) return 1;
-  if (fullCount <= 5) return fullCount - 1;
-  return Math.min(14, fullCount - 2);
+  // Smooth profile reserves 1 spare core on 8+ thread CPUs (~6-12% difference) while
+  // smaller CPUs rely on shorter slices + zero-clamp UI yields to keep scrolling fluid.
+  if (fullCount >= 8) {
+    return fullCount - 1;
+  }
+  return fullCount;
 }
 
 export function getComputeProfileConfig(
@@ -50,11 +56,11 @@ export function getComputeProfileConfig(
     return {
       profile: 'smooth',
       pipelineDepth: 1,
-      minDispatchMs: 6,
-      targetDispatchMs: 18,
-      maxDispatchMs: 30,
+      minDispatchMs: 25,
+      targetDispatchMs: 75,
+      maxDispatchMs: 120,
       cpuThreads,
-      cpuSliceKeysPerWorker: 4_096,
+      cpuSliceKeysPerWorker: 6_144,
       yieldEveryDispatch: true,
     };
   }

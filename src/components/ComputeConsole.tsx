@@ -1,8 +1,12 @@
-import { AlertTriangle, Check, Clock, Compass, Copy, Cpu, FlaskConical, Gauge, ListOrdered, Pause, Play, QrCode, RefreshCw, ShieldCheck, Shuffle, Zap } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Compass, Copy, Cpu, FlaskConical, Gauge, ListOrdered, Lock, Pause, Play, QrCode, RefreshCw, ShieldCheck, Shuffle, Zap } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useMemo, useState } from 'react';
 import type { HardwareCapabilities } from '../engine/computeEngine.ts';
-import { type ComputeProfile, getCpuThreadsForProfile } from '../engine/computeProfile.ts';
+import {
+  type ComputeProfile,
+  canChangeComputeProfile,
+  getCpuThreadsForProfile,
+} from '../engine/computeProfile.ts';
 import { useLocale } from '../i18n/LocaleContext.tsx';
 import { formatLocalizedDecimal, formatLocalizedNumber } from '../i18n/locale.ts';
 import { calculatePayoutSplit, formatBtcFromSats } from '../shared/btcAddress.ts';
@@ -351,21 +355,28 @@ export function ComputeConsole({
             <div
               role="group"
               aria-label={isCs ? 'Výkonnostní profil výpočtu' : 'Compute performance profile'}
-              className="grid grid-cols-2 rounded-lg border border-[#222938] bg-[#0B0E15] p-1 gap-1"
+              className={`grid grid-cols-2 rounded-lg border border-[#222938] bg-[#0B0E15] p-1 gap-1 ${
+                !canChangeComputeProfile(isRunning, isBusyStarting) ? 'opacity-80' : ''
+              }`}
             >
               <button
                 type="button"
+                disabled={!canChangeComputeProfile(isRunning, isBusyStarting)}
                 aria-pressed={computeProfile === 'max'}
                 onClick={() => onChangeComputeProfile?.('max')}
                 title={
-                  isCs
-                    ? 'Plný výkon GPU (2 fronty, 160 ms) / 100 % CPU vláken'
-                    : 'Full GPU queue (2 slots, 160 ms) / 100% CPU threads'
+                  !canChangeComputeProfile(isRunning, isBusyStarting)
+                    ? isCs
+                      ? 'Přepínání výkonu je během výpočtu uzamčeno — nejprve klikněte na Pauza.'
+                      : 'Profile switching is locked while scanning — click Pause first.'
+                    : isCs
+                      ? 'Plný výkon GPU (2 fronty, 160 ms) / 100 % CPU vláken'
+                      : 'Full GPU queue (2 slots, 160 ms) / 100% CPU threads'
                 }
-                className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer disabled:cursor-not-allowed ${
                   computeProfile === 'max'
                     ? 'bg-[#241B10] text-[#F7931A] border border-[#F7931A]/50'
-                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                    : 'text-slate-400 hover:text-slate-200 border border-transparent disabled:opacity-45 disabled:hover:text-slate-400'
                 }`}
               >
                 <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -373,17 +384,22 @@ export function ComputeConsole({
               </button>
               <button
                 type="button"
+                disabled={!canChangeComputeProfile(isRunning, isBusyStarting)}
                 aria-pressed={computeProfile === 'smooth'}
                 onClick={() => onChangeComputeProfile?.('smooth')}
                 title={
-                  isCs
-                    ? 'Plynulé posouvání prohlížeče bez mezer (1 GPU fronta ~18 ms / volná jádra CPU)'
-                    : 'Smooth browser scrolling with zero idle sleeps (1 GPU slot ~18 ms / spare CPU cores)'
+                  !canChangeComputeProfile(isRunning, isBusyStarting)
+                    ? isCs
+                      ? 'Přepínání výkonu je během výpočtu uzamčeno — nejprve klikněte na Pauza.'
+                      : 'Profile switching is locked while scanning — click Pause first.'
+                    : isCs
+                      ? 'Plynulý chod prohlížeče s minimální ztrátou výkonu (1 GPU fronta ~75 ms / nízká zátěž CPU)'
+                      : 'Smooth browser responsiveness with minimal speed loss (1 GPU slot ~75 ms / high CPU throughput)'
                 }
-                className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer disabled:cursor-not-allowed ${
                   computeProfile === 'smooth'
                     ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/45'
-                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                    : 'text-slate-400 hover:text-slate-200 border border-transparent disabled:opacity-45 disabled:hover:text-slate-400'
                 }`}
               >
                 <Gauge className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -439,14 +455,29 @@ export function ComputeConsole({
               )}
             </button>
 
-            <p className="text-[11px] text-slate-400 sm:text-right">
-              {computeProfile === 'smooth'
-                ? isCs
-                  ? 'Smooth: 1 GPU fronta (~18 ms) / volná CPU jádra pro plynulý scroll'
-                  : 'Smooth: 1 GPU slot (~18 ms) / spare CPU cores for responsive scrolling'
-                : isCs
-                  ? 'Max: plný výkon GPU (2 fronty, 160 ms) / 100 % CPU vláken'
-                  : 'Max: full GPU throughput (2 slots, 160 ms) / 100% CPU threads'}
+            <p className="inline-flex items-center justify-end gap-1.5 text-[11px] text-slate-400 sm:text-right">
+              {!canChangeComputeProfile(isRunning, isBusyStarting) ? (
+                <>
+                  <Lock className="h-3 w-3 shrink-0 text-amber-400/80" aria-hidden="true" />
+                  <span>
+                    {isCs
+                      ? 'Pro přepnutí mezi Max a Smooth nejprve klikněte na Pauza.'
+                      : 'Click Pause first to switch between Max and Smooth.'}
+                  </span>
+                </>
+              ) : computeProfile === 'smooth' ? (
+                <span>
+                  {isCs
+                    ? 'Smooth: 1 GPU fronta (~75 ms) / plynulý chod s minimálním poklesem výkonu'
+                    : 'Smooth: 1 GPU slot (~75 ms) / smooth browser with minimal throughput loss'}
+                </span>
+              ) : (
+                <span>
+                  {isCs
+                    ? 'Max: plný výkon GPU (2 fronty, 160 ms) / 100 % CPU vláken'
+                    : 'Max: full GPU throughput (2 slots, 160 ms) / 100% CPU threads'}
+                </span>
+              )}
             </p>
           </div>
         </div>

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import {
+  canChangeComputeProfile,
   computeNextDispatchKeys,
   createIncrementalBasePointCursor,
   getComputeProfileConfig,
@@ -22,32 +23,41 @@ test('Max profile preserves full dual-slot WebGPU timing and 100% CPU thread all
   assert.equal(getCpuThreadsForProfile('max', 16), 16);
 });
 
-test('Smooth profile uses single-slot ~18ms WebGPU budget and leaves spare CPU cores for UI', () => {
+test('Smooth profile preserves near-Max throughput with single-slot ~75ms GPU budget and minimal CPU trim', () => {
   const cfg = getComputeProfileConfig('smooth', 8);
   assert.equal(cfg.profile, 'smooth');
   assert.equal(cfg.pipelineDepth, 1);
-  assert.equal(cfg.minDispatchMs, 6);
-  assert.equal(cfg.targetDispatchMs, 18);
-  assert.equal(cfg.maxDispatchMs, 30);
-  assert.equal(cfg.cpuThreads, 6);
-  assert.equal(cfg.cpuSliceKeysPerWorker, 4_096);
+  assert.equal(cfg.minDispatchMs, 25);
+  assert.equal(cfg.targetDispatchMs, 75);
+  assert.equal(cfg.maxDispatchMs, 120);
+  assert.equal(cfg.cpuThreads, 7);
+  assert.equal(cfg.cpuSliceKeysPerWorker, 6_144);
   assert.equal(cfg.yieldEveryDispatch, true);
 
   assert.equal(getCpuThreadsForProfile('smooth', 1), 1);
-  assert.equal(getCpuThreadsForProfile('smooth', 2), 1);
-  assert.equal(getCpuThreadsForProfile('smooth', 4), 3);
-  assert.equal(getCpuThreadsForProfile('smooth', 16), 14);
+  assert.equal(getCpuThreadsForProfile('smooth', 2), 2);
+  assert.equal(getCpuThreadsForProfile('smooth', 4), 4);
+  assert.equal(getCpuThreadsForProfile('smooth', 7), 7);
+  assert.equal(getCpuThreadsForProfile('smooth', 8), 7);
+  assert.equal(getCpuThreadsForProfile('smooth', 16), 15);
+});
+
+test('canChangeComputeProfile locks switching while scanning or starting and unlocks when paused', () => {
+  assert.equal(canChangeComputeProfile(false, false), true);
+  assert.equal(canChangeComputeProfile(true, false), false);
+  assert.equal(canChangeComputeProfile(false, true), false);
+  assert.equal(canChangeComputeProfile(true, true), false);
 });
 
 test('computeNextDispatchKeys scales smoothly including sub-unit mobile slices without overshooting', () => {
   const smoothCfg = getComputeProfileConfig('smooth', 8);
 
-  // Slow phone GPU takes 75ms on 32,896 keys -> must halve below unitSlice (32,896)
+  // Slow phone GPU takes 150ms (> 120ms) on 32,896 keys -> must halve below unitSlice (32,896)
   const shrunk = computeNextDispatchKeys({
     currentKeys: 32_896,
     lastChecked: 32_896,
     unsubmittedKeys: 1_000_000,
-    gpuSpanMs: 75,
+    gpuSpanMs: 150,
     minSlice: 64,
     unitSlice: 32_896,
     maxSlice: 16_777_216,
@@ -55,12 +65,12 @@ test('computeNextDispatchKeys scales smoothly including sub-unit mobile slices w
   });
   assert.equal(shrunk, 16_448);
 
-  // When sub-unit slice (8,192 keys) runs slightly fast (10ms < 18ms), grow gradually, not by +32,896
+  // When sub-unit slice (8,192 keys) runs faster than target (40ms < 75ms), grow gradually, not by +32,896
   const gentlyGrown = computeNextDispatchKeys({
     currentKeys: 8_192,
     lastChecked: 8_192,
     unsubmittedKeys: 1_000_000,
-    gpuSpanMs: 10,
+    gpuSpanMs: 40,
     minSlice: 64,
     unitSlice: 32_896,
     maxSlice: 16_777_216,
@@ -68,7 +78,7 @@ test('computeNextDispatchKeys scales smoothly including sub-unit mobile slices w
   });
   assert.equal(gentlyGrown, 10_240);
 
-  // Desktop GPU hitting 12ms in smooth mode scales up gently by 1.25x / +unitSlice
+  // Max mode scales fast when GPU is well below minDispatchMs (20ms < 40ms)
   const maxCfg = getComputeProfileConfig('max', 8);
   const maxFastGrow = computeNextDispatchKeys({
     currentKeys: 526_336,
