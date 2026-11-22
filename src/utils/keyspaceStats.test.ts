@@ -9,6 +9,7 @@ import {
   formatCzechDurationFromSeconds,
   formatDurationFromSeconds,
   formatKeyspaceProgressPercent,
+  splitKeyspaceProgressPercent,
 } from './keyspaceStats.ts';
 
 test('maskBtcAddress reveals only prefix and suffix and hides middle characters across all address types', () => {
@@ -47,6 +48,34 @@ test('calculateKeyspaceProgressPercent and formatKeyspaceProgressPercent handle 
   assert.equal(calculateKeyspaceProgressPercent(PUZZLE_71_TOTAL_KEYS * 2n), 100);
   assert.equal(formatKeyspaceProgressPercent(PUZZLE_71_TOTAL_KEYS, 'en'), '100.00%');
   assert.equal(formatKeyspaceProgressPercent(PUZZLE_71_TOTAL_KEYS, 'cs'), '100,00 %');
+});
+
+test('splitKeyspaceProgressPercent splits cleanly at the decimal separator for table alignment', () => {
+  assert.deepEqual(splitKeyspaceProgressPercent(0, 'cs'), {
+    fullText: '0 %',
+    integerPart: '0',
+    fractionAndSuffix: ' %',
+  });
+  assert.deepEqual(splitKeyspaceProgressPercent(0, 'en'), {
+    fullText: '0%',
+    integerPart: '0',
+    fractionAndSuffix: '%',
+  });
+  assert.deepEqual(splitKeyspaceProgressPercent(Number(BLOCK_SIZE), 'cs'), {
+    fullText: '0,000000000045 %',
+    integerPart: '0',
+    fractionAndSuffix: ',000000000045 %',
+  });
+  assert.deepEqual(splitKeyspaceProgressPercent(8_585_216, 'cs'), {
+    fullText: '0,00000000000073 %',
+    integerPart: '0',
+    fractionAndSuffix: ',00000000000073 %',
+  });
+  assert.deepEqual(splitKeyspaceProgressPercent(PUZZLE_71_TOTAL_KEYS, 'en'), {
+    fullText: '100.00%',
+    integerPart: '100',
+    fractionAndSuffix: '.00%',
+  });
 });
 
 test('estimateFullKeyspaceSeconds and formatDurationFromSeconds produce accurate time estimates in EN and CS', () => {

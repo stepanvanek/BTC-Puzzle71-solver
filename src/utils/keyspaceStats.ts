@@ -40,6 +40,45 @@ export function formatKeyspaceProgressPercent(
   return `${formatDecimalForLocale(pct.toFixed(decimals), locale)}${pctSuffix}`;
 }
 
+export interface KeyspaceProgressPercentParts {
+  fullText: string;
+  integerPart: string;
+  fractionAndSuffix: string;
+}
+
+/**
+ * Splits a formatted keyspace progress percentage at its decimal separator so
+ * table rows can align cleanly by the decimal comma/point.
+ */
+export function splitKeyspaceProgressPercent(
+  keysChecked: number | bigint,
+  locale: Locale = 'en',
+): KeyspaceProgressPercentParts {
+  const fullText = formatKeyspaceProgressPercent(keysChecked, locale);
+  const sep = locale === 'cs' ? ',' : '.';
+  const sepIdx = fullText.indexOf(sep);
+  if (sepIdx !== -1) {
+    return {
+      fullText,
+      integerPart: fullText.slice(0, sepIdx),
+      fractionAndSuffix: fullText.slice(sepIdx),
+    };
+  }
+  const suffixIdx = fullText.indexOf(locale === 'cs' ? ' %' : '%');
+  if (suffixIdx !== -1) {
+    return {
+      fullText,
+      integerPart: fullText.slice(0, suffixIdx),
+      fractionAndSuffix: fullText.slice(suffixIdx),
+    };
+  }
+  return {
+    fullText,
+    integerPart: fullText,
+    fractionAndSuffix: '',
+  };
+}
+
 /**
  * Estimates total seconds required to traverse the remaining Puzzle #71 keyspace at `rateKps` (Keys/s).
  */

@@ -4,7 +4,10 @@ import { useLocale } from '../i18n/LocaleContext.tsx';
 import { formatLocalizedNumber } from '../i18n/locale.ts';
 import type { PublicLeaderboardResponse } from '../types/api.ts';
 import { getPublicLeaderboardFromFirestore } from '../services/firestoreStore.ts';
-import { formatKeyspaceProgressPercent } from '../utils/keyspaceStats.ts';
+import {
+  formatKeyspaceProgressPercent,
+  splitKeyspaceProgressPercent,
+} from '../utils/keyspaceStats.ts';
 
 interface LeaderboardSectionProps {
   compact?: boolean;
@@ -205,7 +208,7 @@ export function LeaderboardSection({
                   <th className="py-3 px-4 text-right">
                     {isCs ? 'Dokončené bloky' : 'Completed Blocks'}
                   </th>
-                  <th className="py-3 px-4 sm:px-6 text-right">
+                  <th colSpan={2} scope="colgroup" className="py-3 px-4 sm:px-6 text-right">
                     {isCs ? 'Sólo progres (2⁷⁰)' : 'Solo Progress (2⁷⁰)'}
                   </th>
                 </tr>
@@ -214,6 +217,7 @@ export function LeaderboardSection({
                 {entries.map((entry) => {
                   const isCurrentUser =
                     Boolean(currentMaskedAddress) && entry.maskedAddress === currentMaskedAddress;
+                  const progressParts = splitKeyspaceProgressPercent(entry.totalKeysChecked, locale);
                   return (
                     <tr
                       key={`${entry.rank}-${entry.maskedAddress}`}
@@ -248,8 +252,19 @@ export function LeaderboardSection({
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 sm:px-6 text-right font-mono tabular-nums text-emerald-400 whitespace-nowrap">
-                        {formatKeyspaceProgressPercent(entry.totalKeysChecked, locale)}
+                      <td
+                        aria-label={progressParts.fullText}
+                        data-progress-int
+                        className="py-3 pl-4 pr-0 text-right font-mono tabular-nums text-emerald-400 whitespace-nowrap"
+                      >
+                        {progressParts.integerPart}
+                      </td>
+                      <td
+                        aria-hidden="true"
+                        data-progress-frac
+                        className="py-3 pl-0 pr-4 sm:pr-6 text-left font-mono tabular-nums text-emerald-400 whitespace-nowrap w-px"
+                      >
+                        {progressParts.fractionAndSuffix}
                       </td>
                     </tr>
                   );
