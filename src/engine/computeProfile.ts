@@ -71,23 +71,14 @@ export function getComputeProfileConfig(
   };
 }
 
+let runtimeComputeProfile: ComputeProfile = DEFAULT_COMPUTE_PROFILE;
+
 export function loadSavedComputeProfile(): ComputeProfile {
-  if (typeof window === 'undefined') return DEFAULT_COMPUTE_PROFILE;
-  try {
-    const raw = window.localStorage.getItem(COMPUTE_PROFILE_STORAGE_KEY);
-    return raw === 'smooth' || raw === 'max' ? raw : DEFAULT_COMPUTE_PROFILE;
-  } catch {
-    return DEFAULT_COMPUTE_PROFILE;
-  }
+  return runtimeComputeProfile;
 }
 
 export function saveComputeProfile(profile: ComputeProfile): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(COMPUTE_PROFILE_STORAGE_KEY, profile);
-  } catch {
-    // ignore storage errors
-  }
+  runtimeComputeProfile = profile;
 }
 
 export function computeNextDispatchKeys(params: {

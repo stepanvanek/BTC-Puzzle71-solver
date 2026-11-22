@@ -1,12 +1,74 @@
+# Závislosti a balíčkovací manažery
 node_modules/
+.pnp
+.pnp.*
+.npm
+.pnpm-store/
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Sestavení (build) a mezipaměti
 build/
 dist/
-coverage/
+dist-ssr/
+out/
+server.js
+.vite/
+.cache/
+*.tsbuildinfo
+*.local
+
+# Prostředí a citlivé klíče (secrets)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*serviceAccount*.json
+*service-account*.json
+firebase-adminsdk-*.json
+
+# Lokální databáze (SQLite)
 data/
 *.db
 *.db-*
-.DS_Store
-*.log
-.env*
-!.env.example
+*.sqlite
+*.sqlite-*
+*.sqlite3
 
+# Logy, testy a pokrytí kódu
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+coverage/
+.nyc_output/
+.playwright-cli/
+playwright-report/
+test-results/
+
+# Lokální cache nástrojů (Firebase CLI, AI Studio)
+.firebase/
+.aistudio/
+
+# Operační systémy a editory (IDE)
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln

@@ -1,0 +1,422 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 80 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidToken(token) {
+      return token is string && token.size() >= 20 && token.size() <= 64 && token.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidBtcAddress(addr) {
+      return addr is string && addr.size() >= 25 && addr.size() <= 90 && addr.matches('^[a-zA-Z0-9]{25,90}$');
+    }
+
+    function isValidNumericId(val) {
+      return val is string && val.size() >= 1 && val.size() <= 20 && val.matches('^[0-9]{1,20}$');
+    }
+
+    function isValidSha256Hex(val) {
+      return val is string && val.size() == 64 && val.matches('^[0-9a-f]{64}$');
+    }
+
+    function isValidHexKey(val) {
+      return val is string && val.size() >= 3 && val.size() <= 66 && val.matches('^0x[0-9a-f]{1,64}$');
+    }
+
+    function isValidSessionDoc(data, docAddr) {
+      return data.keys().hasAll([
+          'btcAddress',
+          'shareToken',
+          'addressType',
+          'blockMode',
+          'seqCursor',
+          'totalKeysChecked',
+          'completedBlocksCount',
+          'activeLeasedCount',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'btcAddress',
+          'shareToken',
+          'addressType',
+          'blockMode',
+          'seqCursor',
+          'totalKeysChecked',
+          'completedBlocksCount',
+          'activeLeasedCount',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.btcAddress == docAddr &&
+        isValidBtcAddress(data.btcAddress) &&
+        isValidToken(data.shareToken) &&
+        data.addressType is string && data.addressType.size() >= 1 && data.addressType.size() <= 48 &&
+        (data.blockMode == 'random' || data.blockMode == 'sequential') &&
+        isValidNumericId(data.seqCursor) &&
+        data.totalKeysChecked is int && data.totalKeysChecked >= 0 &&
+        data.completedBlocksCount is int && data.completedBlocksCount >= 0 &&
+        data.activeLeasedCount is int && data.activeLeasedCount >= 0 && data.activeLeasedCount <= 64 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidShareTokenDoc(data) {
+      return data.keys().hasAll(['btcAddress', 'createdAt']) &&
+        data.keys().hasOnly(['btcAddress', 'createdAt']) &&
+        isValidBtcAddress(data.btcAddress) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidDeviceDoc(data, deviceId) {
+      return data.keys().hasAll([
+          'id',
+          'label',
+          'computeMode',
+          'gpuName',
+          'lastRateKps',
+          'keysChecked',
+          'blocksCompleted',
+          'lastSeenAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'label',
+          'computeMode',
+          'gpuName',
+          'lastRateKps',
+          'keysChecked',
+          'blocksCompleted',
+          'lastSeenAt'
+        ]) &&
+        data.id == deviceId &&
+        isValidId(data.id) &&
+        data.label is string && data.label.size() >= 1 && data.label.size() <= 80 &&
+        (data.computeMode == 'webgpu' || data.computeMode == 'cpu') &&
+        data.gpuName is string && data.gpuName.size() >= 1 && data.gpuName.size() <= 160 &&
+        data.lastRateKps is number && data.lastRateKps >= 0 &&
+        data.keysChecked is int && data.keysChecked >= 0 &&
+        data.blocksCompleted is int && data.blocksCompleted >= 0 &&
+        data.lastSeenAt is timestamp;
+    }
+
+    function isValidBlockDoc(data, blockIndex) {
+      return data.keys().hasAll([
+          'blockIndex',
+          'startKeyHex',
+          'endKeyHex',
+          'status',
+          'deviceId',
+          'progressOffset',
+          'totalKeys',
+          'powOffsets',
+          'powCount',
+          'leasedAt',
+          'heartbeatAt',
+          'completedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'blockIndex',
+          'startKeyHex',
+          'endKeyHex',
+          'status',
+          'deviceId',
+          'progressOffset',
+          'totalKeys',
+          'powOffsets',
+          'powCount',
+          'leasedAt',
+          'heartbeatAt',
+          'completedAt'
+        ]) &&
+        data.blockIndex == blockIndex &&
+        isValidNumericId(data.blockIndex) &&
+        isValidHexKey(data.startKeyHex) &&
+        isValidHexKey(data.endKeyHex) &&
+        (data.status == 'leased' || data.status == 'completed') &&
+        isValidId(data.deviceId) &&
+        data.totalKeys is int && data.totalKeys > 0 && data.totalKeys <= 536870912 &&
+        data.progressOffset is int && data.progressOffset >= 0 && data.progressOffset <= data.totalKeys &&
+        data.powOffsets is list &&
+        data.powOffsets.size() <= 64 &&
+        (data.powOffsets.size() == 0 || data.powOffsets[0] is int) &&
+        data.powCount is int &&
+        data.powCount == data.powOffsets.size() &&
+        !(data.totalKeys >= 536870912 && data.powCount == 0 && data.progressOffset > 322122547) &&
+        data.leasedAt is timestamp &&
+        data.heartbeatAt is timestamp &&
+        (data.completedAt == null || data.completedAt is timestamp);
+    }
+
+    function isValidLeaderboardDoc(data) {
+      return data.keys().hasAll([
+          'maskedAddress',
+          'addressType',
+          'totalKeysChecked',
+          'completedBlocksCount',
+          'activeBlocksCount',
+          'lastActivityAt'
+        ]) &&
+        data.keys().hasOnly([
+          'maskedAddress',
+          'addressType',
+          'totalKeysChecked',
+          'completedBlocksCount',
+          'activeBlocksCount',
+          'lastActivityAt'
+        ]) &&
+        data.maskedAddress is string && data.maskedAddress.size() >= 5 && data.maskedAddress.size() <= 32 &&
+        data.addressType is string && data.addressType.size() >= 1 && data.addressType.size() <= 48 &&
+        data.totalKeysChecked is int && data.totalKeysChecked >= 0 &&
+        data.completedBlocksCount is int && data.completedBlocksCount >= 0 &&
+        data.activeBlocksCount is int && data.activeBlocksCount >= 0 && data.activeBlocksCount <= 64 &&
+        data.lastActivityAt is timestamp;
+    }
+
+    function isValidRelayDoc(data, docTxid) {
+      return data.keys().hasAll([
+          'txid',
+          'userSats',
+          'adminSats',
+          'feeSats',
+          'isDryRun',
+          'summaryText',
+          'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'txid',
+          'userSats',
+          'adminSats',
+          'feeSats',
+          'isDryRun',
+          'summaryText',
+          'createdAt'
+        ]) &&
+        data.txid == docTxid &&
+        isValidSha256Hex(data.txid) &&
+        data.userSats is string && data.userSats.size() >= 1 && data.userSats.size() <= 24 && data.userSats.matches('^[0-9]{1,24}$') &&
+        data.adminSats is string && data.adminSats.size() >= 1 && data.adminSats.size() <= 24 && data.adminSats.matches('^[0-9]{1,24}$') &&
+        data.feeSats is string && data.feeSats.size() >= 1 && data.feeSats.size() <= 24 && data.feeSats.matches('^[0-9]{1,24}$') &&
+        data.isDryRun is bool &&
+        data.summaryText is string && data.summaryText.size() >= 1 && data.summaryText.size() <= 1000 &&
+        data.createdAt is timestamp;
+    }
+
+    // Health check ping document (client startup testConnection)
+    match /test/{docId} {
+      allow get: if docId == 'connection';
+      allow list, create, update, delete: if false;
+    }
+
+    // Lookup from shareToken (?u=...) -> btcAddress (no listing allowed)
+    match /share_tokens/{shareToken} {
+      allow get: if isValidToken(shareToken);
+      allow list: if false;
+      allow create: if isValidToken(shareToken) &&
+        isValidShareTokenDoc(incoming()) &&
+        incoming().createdAt == request.time &&
+        existsAfter(/databases/$(database)/documents/sessions/$(incoming().btcAddress)) &&
+        getAfter(/databases/$(database)/documents/sessions/$(incoming().btcAddress)).data.shareToken == shareToken;
+      allow update, delete: if false;
+    }
+
+    // Per-Bitcoin-address sessions (direct lookup by exact btcAddress only; listing forbidden)
+    match /sessions/{btcAddress} {
+      allow get: if isValidBtcAddress(btcAddress);
+      allow list: if false;
+      allow create: if isValidBtcAddress(btcAddress) &&
+        isValidSessionDoc(incoming(), btcAddress) &&
+        incoming().totalKeysChecked == 0 &&
+        incoming().completedBlocksCount == 0 &&
+        incoming().activeLeasedCount == 0 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        existsAfter(/databases/$(database)/documents/share_tokens/$(incoming().shareToken));
+
+      allow update: if isValidBtcAddress(btcAddress) &&
+        isValidSessionDoc(incoming(), btcAddress) &&
+        incoming().btcAddress == existing().btcAddress &&
+        incoming().shareToken == existing().shareToken &&
+        incoming().addressType == existing().addressType &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          // Action 1: Update block selection strategy (and optionally decrement activeLeasedCount when releasing 0-progress blocks)
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['blockMode', 'seqCursor', 'activeLeasedCount', 'updatedAt']) &&
+            incoming().activeLeasedCount <= existing().activeLeasedCount
+          ) ||
+          // Action 2: Update monotonic keyspace & lease progress counters
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'seqCursor',
+              'totalKeysChecked',
+              'completedBlocksCount',
+              'activeLeasedCount',
+              'updatedAt'
+            ]) &&
+            incoming().totalKeysChecked >= existing().totalKeysChecked &&
+            incoming().totalKeysChecked - existing().totalKeysChecked <= 536870912 &&
+            incoming().completedBlocksCount >= existing().completedBlocksCount &&
+            incoming().completedBlocksCount - existing().completedBlocksCount <= 1
+          )
+        );
+
+      allow delete: if false;
+
+      // Ephemeral browser compute devices for this address session
+      match /devices/{deviceId} {
+        allow get: if isValidBtcAddress(btcAddress) && isValidId(deviceId);
+        allow list: if isValidBtcAddress(btcAddress);
+        allow create: if isValidBtcAddress(btcAddress) &&
+          isValidId(deviceId) &&
+          isValidDeviceDoc(incoming(), deviceId) &&
+          exists(/databases/$(database)/documents/sessions/$(btcAddress)) &&
+          incoming().lastSeenAt == request.time;
+
+        allow update: if isValidBtcAddress(btcAddress) &&
+          isValidId(deviceId) &&
+          isValidDeviceDoc(incoming(), deviceId) &&
+          exists(/databases/$(database)/documents/sessions/$(btcAddress)) &&
+          incoming().id == existing().id &&
+          incoming().keysChecked >= existing().keysChecked &&
+          incoming().keysChecked - existing().keysChecked <= 536870912 &&
+          incoming().blocksCompleted >= existing().blocksCompleted &&
+          incoming().blocksCompleted - existing().blocksCompleted <= 1 &&
+          incoming().lastSeenAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'label',
+            'computeMode',
+            'gpuName',
+            'lastRateKps',
+            'keysChecked',
+            'blocksCompleted',
+            'lastSeenAt'
+          ]);
+
+        allow delete: if false;
+      }
+
+      // Unique 2^29 blocks for this address session
+      match /blocks/{blockIndex} {
+        allow get: if isValidBtcAddress(btcAddress) && isValidNumericId(blockIndex);
+        allow list: if isValidBtcAddress(btcAddress);
+        allow create: if isValidBtcAddress(btcAddress) &&
+          isValidNumericId(blockIndex) &&
+          isValidBlockDoc(incoming(), blockIndex) &&
+          exists(/databases/$(database)/documents/sessions/$(btcAddress)) &&
+          incoming().status == 'leased' &&
+          incoming().leasedAt == request.time &&
+          incoming().heartbeatAt == request.time &&
+          incoming().completedAt == null;
+
+        allow update: if isValidBtcAddress(btcAddress) &&
+          isValidNumericId(blockIndex) &&
+          existing().status == 'leased' &&
+          isValidBlockDoc(incoming(), blockIndex) &&
+          exists(/databases/$(database)/documents/sessions/$(btcAddress)) &&
+          incoming().blockIndex == existing().blockIndex &&
+          incoming().startKeyHex == existing().startKeyHex &&
+          incoming().endKeyHex == existing().endKeyHex &&
+          incoming().totalKeys == existing().totalKeys &&
+          incoming().leasedAt == existing().leasedAt &&
+          incoming().heartbeatAt == request.time &&
+          incoming().progressOffset >= existing().progressOffset &&
+          incoming().powOffsets.size() >= existing().powOffsets.size() &&
+          (
+            // Action 1: Heartbeat, reclaim stale lease, or checkpoint progress
+            (
+              incoming().status == 'leased' &&
+              incoming().completedAt == null &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'deviceId',
+                'progressOffset',
+                'powOffsets',
+                'powCount',
+                'heartbeatAt'
+              ])
+            ) ||
+            // Action 2: Complete block (terminal lock) with verified PoW share threshold
+            (
+              incoming().status == 'completed' &&
+              incoming().progressOffset == existing().totalKeys &&
+              incoming().completedAt == request.time &&
+              incoming().powCount >= (existing().totalKeys >= 536870912 ? 6 : 1) &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'status',
+                'deviceId',
+                'progressOffset',
+                'powOffsets',
+                'powCount',
+                'heartbeatAt',
+                'completedAt'
+              ])
+            )
+          );
+
+        allow delete: if isValidBtcAddress(btcAddress) &&
+          isValidNumericId(blockIndex) &&
+          existing().status == 'leased' &&
+          existing().progressOffset == 0;
+      }
+
+      // Immutable relay broadcast audit logs
+      match /relay_submissions/{txid} {
+        allow get: if isValidBtcAddress(btcAddress) && isValidSha256Hex(txid);
+        allow list: if isValidBtcAddress(btcAddress);
+        allow create: if isValidBtcAddress(btcAddress) &&
+          isValidSha256Hex(txid) &&
+          isValidRelayDoc(incoming(), txid) &&
+          exists(/databases/$(database)/documents/sessions/$(btcAddress)) &&
+          incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    // Public anonymized leaderboard (PII-isolated: keyed by SHA-256 of address, masked prefix/suffix only)
+    match /leaderboard/{addressHash} {
+      allow get: if isValidSha256Hex(addressHash);
+      allow list: if resource.data.totalKeysChecked >= 0 &&
+        request.query.limit != null &&
+        request.query.limit <= 100;
+      allow create: if isValidSha256Hex(addressHash) &&
+        isValidLeaderboardDoc(incoming()) &&
+        incoming().totalKeysChecked <= 536870912 &&
+        incoming().completedBlocksCount <= 1 &&
+        incoming().lastActivityAt == request.time &&
+        (incoming().totalKeysChecked > 0 || incoming().completedBlocksCount > 0 || incoming().activeBlocksCount > 0);
+      allow update: if isValidSha256Hex(addressHash) &&
+        isValidLeaderboardDoc(incoming()) &&
+        incoming().maskedAddress == existing().maskedAddress &&
+        incoming().addressType == existing().addressType &&
+        incoming().totalKeysChecked >= existing().totalKeysChecked &&
+        incoming().totalKeysChecked - existing().totalKeysChecked <= 536870912 &&
+        incoming().completedBlocksCount >= existing().completedBlocksCount &&
+        incoming().completedBlocksCount - existing().completedBlocksCount <= 1 &&
+        incoming().lastActivityAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'totalKeysChecked',
+          'completedBlocksCount',
+          'activeBlocksCount',
+          'lastActivityAt'
+        ]);
+      allow delete: if false;
+    }
+  }
+}

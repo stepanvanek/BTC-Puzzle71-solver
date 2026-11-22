@@ -526,8 +526,42 @@ app.post('/api/broadcast-private', async (req, res) => {
       throw new Error('Server platform payout address configuration is invalid.');
     }
 
-    const session = shareToken ? store.getSessionByToken(shareToken) : null;
-    if (!dryRun && !session) {
+    let resolvedBtcAddress: string | null = null;
+    const sqliteSession = shareToken ? store.getSessionByToken(shareToken) : null;
+    if (sqliteSession) {
+      resolvedBtcAddress = sqliteSession.btc_address;
+    } else if (shareToken && /^[A-Za-z0-9_-]{20,64}$/.test(shareToken)) {
+      const fbConfigPath = path.join(__dirname, 'firebase-applet-config.json');
+      if (fs.existsSync(fbConfigPath)) {
+        try {
+          const fbConfig = JSON.parse(fs.readFileSync(fbConfigPath, 'utf8')) as {
+            projectId?: string;
+            firestoreDatabaseId?: string;
+            apiKey?: string;
+          };
+          if (fbConfig.projectId && fbConfig.firestoreDatabaseId && fbConfig.apiKey) {
+            const docUrl =
+              `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(fbConfig.projectId)}` +
+              `/databases/${encodeURIComponent(fbConfig.firestoreDatabaseId)}` +
+              `/documents/share_tokens/${encodeURIComponent(shareToken)}?key=${encodeURIComponent(fbConfig.apiKey)}`;
+            const fbRes = await fetch(docUrl);
+            if (fbRes.ok) {
+              const fbDoc = (await fbRes.json()) as {
+                fields?: { btcAddress?: { stringValue?: string } };
+              };
+              const addr = fbDoc.fields?.btcAddress?.stringValue;
+              if (addr) {
+                resolvedBtcAddress = addr;
+              }
+            }
+          }
+        } catch {
+          // fallback error handled below if !dryRun
+        }
+      }
+    }
+
+    if (!dryRun && !resolvedBtcAddress) {
       res.status(401).json({
         error:
           locale === 'cs'
@@ -538,8 +572,8 @@ app.post('/api/broadcast-private', async (req, res) => {
     }
 
     let expectedUserScript: Uint8Array | undefined;
-    if (session) {
-      const userParsed = validateBitcoinAddress(session.btc_address, locale);
+    if (resolvedBtcAddress) {
+      const userParsed = validateBitcoinAddress(resolvedBtcAddress, locale);
       if (userParsed.valid && userParsed.parsed) {
         expectedUserScript = userParsed.parsed.scriptPubKey;
       }
@@ -570,9 +604,9 @@ app.post('/api/broadcast-private', async (req, res) => {
 
     const result = await broadcastPrivatePoolTransaction({ rawTxHex, dryRun, locale });
 
-    if (session) {
+    if (sqliteSession) {
       store.recordRelaySubmission({
-        shareToken: session.share_token,
+        shareToken: sqliteSession.share_token,
         txid: verified.txid,
         rawTxHex: rawTxHex.trim().toLowerCase(),
         userSats: verified.userSats.toString(),

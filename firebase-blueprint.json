@@ -1,0 +1,369 @@
+{
+  "entities": {
+    "UserSession": {
+      "title": "UserSession",
+      "description": "Isolated Puzzle #71 keyspace session keyed by normalized Bitcoin payout address.",
+      "type": "object",
+      "properties": {
+        "btcAddress": {
+          "type": "string",
+          "minLength": 25,
+          "maxLength": 90,
+          "pattern": "^[a-zA-Z0-9]{25,90}$",
+          "description": "Normalized mainnet Bitcoin payout address (immutable)."
+        },
+        "shareToken": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]{20,64}$",
+          "description": "128-bit URL-safe share token for multi-device URL (?u=...) access (immutable)."
+        },
+        "addressType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "description": "Detected Bitcoin address format label."
+        },
+        "blockMode": {
+          "type": "string",
+          "enum": ["random", "sequential"],
+          "description": "Block leasing strategy for this address."
+        },
+        "seqCursor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^[0-9]{1,20}$",
+          "description": "Next sequential 2^29 block index as decimal string."
+        },
+        "totalKeysChecked": {
+          "type": "integer",
+          "description": "Monotonic cumulative count of scanned keys across all blocks for this address."
+        },
+        "completedBlocksCount": {
+          "type": "integer",
+          "description": "Cumulative count of PoW-verified completed 2^29 blocks."
+        },
+        "activeLeasedCount": {
+          "type": "integer",
+          "description": "Current count of active in-progress leased blocks."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when session was created (immutable)."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last session update."
+        }
+      },
+      "required": [
+        "btcAddress",
+        "shareToken",
+        "addressType",
+        "blockMode",
+        "seqCursor",
+        "totalKeysChecked",
+        "completedBlocksCount",
+        "activeLeasedCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ShareTokenLookup": {
+      "title": "ShareTokenLookup",
+      "description": "Immutable mapping from URL shareToken to normalized btcAddress.",
+      "type": "object",
+      "properties": {
+        "btcAddress": {
+          "type": "string",
+          "minLength": 25,
+          "maxLength": 90,
+          "pattern": "^[a-zA-Z0-9]{25,90}$",
+          "description": "Normalized target Bitcoin payout address."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when mapping was created."
+        }
+      },
+      "required": ["btcAddress", "createdAt"]
+    },
+    "SessionDevice": {
+      "title": "SessionDevice",
+      "description": "Ephemeral browser compute worker instance under a Bitcoin address session.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "description": "Runtime-generated device identifier (matches document ID)."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Human-readable browser/platform label."
+        },
+        "computeMode": {
+          "type": "string",
+          "enum": ["webgpu", "cpu"],
+          "description": "Active compute backend."
+        },
+        "gpuName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Detected WebGPU adapter or CPU fallback description."
+        },
+        "lastRateKps": {
+          "type": "number",
+          "description": "Last measured throughput in keys per second."
+        },
+        "keysChecked": {
+          "type": "integer",
+          "description": "Cumulative keys checked by this device instance."
+        },
+        "blocksCompleted": {
+          "type": "integer",
+          "description": "Cumulative blocks completed by this device instance."
+        },
+        "lastSeenAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last heartbeat or checkpoint."
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "computeMode",
+        "gpuName",
+        "lastRateKps",
+        "keysChecked",
+        "blocksCompleted",
+        "lastSeenAt"
+      ]
+    },
+    "SearchedBlock": {
+      "title": "SearchedBlock",
+      "description": "Canonical 2^29 keyspace block leased or completed under a Bitcoin address session.",
+      "type": "object",
+      "properties": {
+        "blockIndex": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^[0-9]{1,20}$",
+          "description": "Block index in [0, 2^41 - 1] (matches document ID)."
+        },
+        "startKeyHex": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 66,
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "Inclusive starting hex key of the block (immutable)."
+        },
+        "endKeyHex": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 66,
+          "pattern": "^0x[0-9a-f]{1,64}$",
+          "description": "Inclusive ending hex key of the block (immutable)."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["leased", "completed"],
+          "description": "Block lifecycle state; completed is terminal and immutable."
+        },
+        "deviceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+          "description": "Device ID currently owning or having completed the block."
+        },
+        "progressOffset": {
+          "type": "integer",
+          "description": "Monotonic keys scanned inside this block [0, totalKeys]."
+        },
+        "totalKeys": {
+          "type": "integer",
+          "description": "Block size in keys (up to 536,870,912)."
+        },
+        "powOffsets": {
+          "type": "array",
+          "description": "Bounded array (<= 64) of verified integer Proof-of-Work key offsets."
+        },
+        "powCount": {
+          "type": "integer",
+          "description": "Count of verified PoW shares matching powOffsets.size()."
+        },
+        "leasedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the block was leased (immutable)."
+        },
+        "heartbeatAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last lease heartbeat or progress checkpoint."
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when completed, or null while leased."
+        }
+      },
+      "required": [
+        "blockIndex",
+        "startKeyHex",
+        "endKeyHex",
+        "status",
+        "deviceId",
+        "progressOffset",
+        "totalKeys",
+        "powOffsets",
+        "powCount",
+        "leasedAt",
+        "heartbeatAt",
+        "completedAt"
+      ]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Public anonymized solver leaderboard entry (PII-isolated: no full BTC address or shareToken).",
+      "type": "object",
+      "properties": {
+        "maskedAddress": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 32,
+          "description": "Masked Bitcoin address showing only prefix and suffix."
+        },
+        "addressType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "description": "Bitcoin address type label."
+        },
+        "totalKeysChecked": {
+          "type": "integer",
+          "description": "Monotonic total keys scanned for this address."
+        },
+        "completedBlocksCount": {
+          "type": "integer",
+          "description": "Monotonic completed 2^29 blocks count."
+        },
+        "activeBlocksCount": {
+          "type": "integer",
+          "description": "Active leased blocks count."
+        },
+        "lastActivityAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the most recent compute activity."
+        }
+      },
+      "required": [
+        "maskedAddress",
+        "addressType",
+        "totalKeysChecked",
+        "completedBlocksCount",
+        "activeBlocksCount",
+        "lastActivityAt"
+      ]
+    },
+    "RelayAuditLog": {
+      "title": "RelayAuditLog",
+      "description": "Immutable record of a private pool transaction broadcast attempt.",
+      "type": "object",
+      "properties": {
+        "txid": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Bitcoin transaction ID (matches document ID)."
+        },
+        "userSats": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "pattern": "^[0-9]{1,24}$",
+          "description": "85% user payout in satoshis."
+        },
+        "adminSats": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "pattern": "^[0-9]{1,24}$",
+          "description": "15% platform payout in satoshis."
+        },
+        "feeSats": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "pattern": "^[0-9]{1,24}$",
+          "description": "Miner fee in satoshis."
+        },
+        "isDryRun": {
+          "type": "boolean",
+          "description": "Whether this was a Puzzle #5 dry-run or mainnet broadcast."
+        },
+        "summaryText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Human-readable pool submission summary."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of relay attempt."
+        }
+      },
+      "required": [
+        "txid",
+        "userSats",
+        "adminSats",
+        "feeSats",
+        "isDryRun",
+        "summaryText",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/sessions/{btcAddress}": {
+      "schema": { "$ref": "#/entities/UserSession" },
+      "description": "Primary per-Bitcoin-address session root keyed by normalized btcAddress."
+    },
+    "/share_tokens/{shareToken}": {
+      "schema": { "$ref": "#/entities/ShareTokenLookup" },
+      "description": "Direct lookup from shareToken (?u=...) to normalized btcAddress."
+    },
+    "/sessions/{btcAddress}/devices/{deviceId}": {
+      "schema": { "$ref": "#/entities/SessionDevice" },
+      "description": "Ephemeral device records for an address session."
+    },
+    "/sessions/{btcAddress}/blocks/{blockIndex}": {
+      "schema": { "$ref": "#/entities/SearchedBlock" },
+      "description": "Unique 2^29 keyspace blocks for an address session."
+    },
+    "/sessions/{btcAddress}/relay_submissions/{txid}": {
+      "schema": { "$ref": "#/entities/RelayAuditLog" },
+      "description": "Immutable private relay audit log for winning key claim broadcasts."
+    },
+    "/leaderboard/{addressHash}": {
+      "schema": { "$ref": "#/entities/LeaderboardEntry" },
+      "description": "Public anonymized leaderboard keyed by SHA-256 hex digest of btcAddress."
+    }
+  }
+}

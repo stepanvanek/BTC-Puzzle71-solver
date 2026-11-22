@@ -1,8 +1,6 @@
 import type { Locale } from '../i18n/locale.ts';
 import { pathnameForTab } from '../i18n/locale.ts';
 
-const LEGACY_DEVICE_ID_KEY = 'puzzle71_device_id_v1';
-
 let runtimeDeviceId: string | null = null;
 let runtimeDeviceSecret: string | null = null;
 
@@ -20,11 +18,6 @@ function generateRandomHex(byteLength: number): string {
 
 export function getOrCreateDeviceId(): string {
   if (runtimeDeviceId) return runtimeDeviceId;
-  try {
-    localStorage.removeItem(LEGACY_DEVICE_ID_KEY);
-  } catch {
-    // ignore storage cleanup errors
-  }
   runtimeDeviceId =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()

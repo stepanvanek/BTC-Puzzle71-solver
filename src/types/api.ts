@@ -29,7 +29,7 @@ export interface SessionData {
     isOnline: boolean;
   }>;
   recentBlocks: Array<{
-    id: number;
+    id: string;
     blockIndex: string;
     startKeyHex: string;
     endKeyHex: string;
@@ -44,7 +44,7 @@ export interface SessionData {
 }
 
 export interface LeasedBlockPayload {
-  id: number;
+  id: string;
   blockIndex: string;
   startKeyHex: string;
   endKeyHex: string;

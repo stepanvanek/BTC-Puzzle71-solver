@@ -234,20 +234,25 @@ export function LegalTerms() {
               <li>
                 <strong className="text-slate-200">
                   {isCs
-                    ? 'Ztráta lokálního stavu a výpadky serveru:'
-                    : 'Local state loss and server downtime:'}
+                    ? 'Ukládání stavu bez cookies a úložiště prohlížeče:'
+                    : 'Cookie-free operation & cloud persistence:'}
                 </strong>{' '}
                 {isCs ? (
                   <>
-                    Vymazání dat prohlížeče (<span className="font-mono">localStorage</span>),
-                    zavření karty, restart nebo výpadek databáze serveru může způsobit ztrátu sdílené
-                    relace či evidovaných prohledaných bloků.
+                    Aplikace neukládá žádné cookies ani trvalá data do prohlížeče (
+                    <span className="font-mono">localStorage</span> /{' '}
+                    <span className="font-mono">IndexedDB</span>). Projitý prostor se průběžně
+                    ukládá do cloudové databáze Firebase Firestore pod vaší zadanou bitcoinovou
+                    adresou; zavření karty před odesláním checkpointu však může způsobit ztrátu
+                    posledních několika sekund neuložené dávky.
                   </>
                 ) : (
                   <>
-                    Clearing browser storage (<span className="font-mono">localStorage</span>),
-                    closing tabs, restarts, or server database outages may result in loss of
-                    session links or tracked scanned block records.
+                    This application stores zero cookies or persistent browser storage (
+                    <span className="font-mono">localStorage</span> /{' '}
+                    <span className="font-mono">IndexedDB</span>). Scanned keyspace is persisted
+                    in Firebase Firestore under your Bitcoin address; closing a tab mid-batch
+                    before a checkpoint may forfeit the most recent unsaved seconds.
                   </>
                 )}
               </li>

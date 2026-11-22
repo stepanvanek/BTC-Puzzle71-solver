@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocale } from '../i18n/LocaleContext.tsx';
 import { formatLocalizedNumber } from '../i18n/locale.ts';
 import type { PublicLeaderboardResponse } from '../types/api.ts';
+import { getPublicLeaderboardFromFirestore } from '../services/firestoreStore.ts';
 import { formatKeyspaceProgressPercent } from '../utils/keyspaceStats.ts';
 
 interface LeaderboardSectionProps {
@@ -31,16 +32,7 @@ export function LeaderboardSection({
       }
       try {
         const limit = compact ? 15 : 50;
-        const res = await fetch(`/api/leaderboard?limit=${limit}`);
-        const json = (await res.json()) as PublicLeaderboardResponse & { error?: string };
-        if (!res.ok) {
-          throw new Error(
-            json.error ||
-              (isCs
-                ? 'Nepodařilo se načíst veřejný žebříček.'
-                : 'Failed to load public leaderboard.'),
-          );
-        }
+        const json = await getPublicLeaderboardFromFirestore(limit);
         setData(json);
         setError(null);
       } catch (err) {

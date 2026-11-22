@@ -34,13 +34,22 @@ import {
 } from './engine/computeEngine.ts';
 import {
   type ComputeProfile,
-  MAX_CALIBRATION_STORAGE_KEY,
-  SMOOTH_CALIBRATION_STORAGE_KEY,
   computeNextDispatchKeys,
   getComputeProfileConfig,
   loadSavedComputeProfile,
   saveComputeProfile,
 } from './engine/computeProfile.ts';
+import {
+  checkpointBlockInFirestore,
+  completeBlockInFirestore,
+  createOrResumeSessionByAddress,
+  getSessionSummaryByAddress,
+  getSessionSummaryByToken,
+  heartbeatBlockInFirestore,
+  leaseBlockBatchInFirestore,
+  recordRelaySubmissionInFirestore,
+  updateSessionStrategyInFirestore,
+} from './services/firestoreStore.ts';
 import { buildAndSignPuzzle71Tx, type SignedPuzzleTxResult } from './shared/btcTx.ts';
 import {
   ADMIN_PAYOUT_ADDRESS,
@@ -55,39 +64,17 @@ import {
 } from './shared/puzzle71.ts';
 import type {
   ActiveTab,
-  LeaseBlocksResponse,
   LeasedBlockPayload,
   PrivateBroadcastResult,
   PuzzleNetworkInfo,
   SessionData,
 } from './types/api.ts';
-import { detectDeviceLabel, getOrCreateDeviceId, getOrCreateDeviceSecret } from './utils/deviceId.ts';
+import { detectDeviceLabel, getOrCreateDeviceId } from './utils/deviceId.ts';
 import {
   DEFAULT_MAX_SPEED_SAMPLES,
   type SpeedSample,
   appendSpeedSample,
 } from './utils/speedHistory.ts';
-
-const CALIBRATION_RATE_KEY = 'puzzle71.measuredRateKps_v1';
-
-function loadSavedRateKps(): number {
-  if (typeof window === 'undefined') return 0;
-  try {
-    const val = Number(localStorage.getItem(CALIBRATION_RATE_KEY) ?? '0');
-    return Number.isFinite(val) && val > 0 ? val : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function saveMeasuredRateKps(rateKps: number): void {
-  if (typeof window === 'undefined' || !Number.isFinite(rateKps) || rateKps <= 0) return;
-  try {
-    localStorage.setItem(CALIBRATION_RATE_KEY, String(Math.round(rateKps)));
-  } catch {
-    // ignore storage errors
-  }
-}
 
 function extractShareTokenFromUrl(): string | null {
   if (typeof window === 'undefined') return null;
@@ -98,13 +85,17 @@ function extractShareTokenFromUrl(): string | null {
   return pathMatch ? pathMatch[1] : null;
 }
 
-async function safeParseJson<T>(res: Response, fallbackErr: string): Promise<T> {
-  const raw = await res.text();
+function extractReadableError(err: unknown, fallback: string): string {
+  if (!(err instanceof Error)) return fallback;
   try {
-    return JSON.parse(raw) as T;
+    const parsed = JSON.parse(err.message) as { error?: string };
+    if (parsed && typeof parsed.error === 'string' && parsed.error.trim()) {
+      return parsed.error;
+    }
   } catch {
-    throw new Error(fallbackErr);
+    // non-JSON standard Error
   }
+  return err.message || fallback;
 }
 
 async function yieldToBrowserUi(): Promise<void> {
@@ -124,7 +115,6 @@ export default function App() {
 
   const [locale, setLocale] = useState<Locale>(initialRoute.locale);
   const [deviceId] = useState(() => getOrCreateDeviceId());
-  const [deviceSecret] = useState(() => getOrCreateDeviceSecret());
   const deviceLabel = detectDeviceLabel(locale);
 
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
@@ -177,7 +167,9 @@ export default function App() {
   const queuedBlocksRef = useRef<LeasedBlockPayload[]>([]);
   const batchTotalRef = useRef(0);
   const batchIndexRef = useRef(0);
-  const lastMeasuredRateRef = useRef<number>(loadSavedRateKps());
+  const lastMeasuredRateRef = useRef<number>(0);
+  const calibratedMaxKeysRef = useRef<number | null>(null);
+  const calibratedSmoothKeysRef = useRef<number | null>(null);
   const lastHistoryAtRef = useRef(0);
 
   const [computeProfile, setComputeProfile] = useState<ComputeProfile>(() =>
@@ -236,23 +228,16 @@ export default function App() {
       setIsLoadingSession(true);
       setSessionError(null);
       try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(token)}`);
-        const data = await safeParseJson<SessionData & { error?: string }>(
-          res,
-          locale === 'cs'
-            ? 'Server vrátil neplatnou odpověď při načítání relace.'
-            : 'The server returned an invalid response while loading the session.',
-        );
-        if (!res.ok) {
+        const data = await getSessionSummaryByToken(token);
+        if (!data) {
           throw new Error(
-            data.error ||
-              (locale === 'cs' ? 'Odkaz relace nebyl nalezen.' : 'Session link was not found.'),
+            locale === 'cs' ? 'Odkaz relace nebyl nalezen.' : 'Session link was not found.',
           );
         }
         setSessionData(data);
         const ownLeased = data.recentBlocks
           .filter((b) => b.deviceId === deviceId && b.status === 'leased')
-          .sort((a, b) => a.leasedAt - b.leasedAt || a.id - b.id);
+          .sort((a, b) => a.leasedAt - b.leasedAt || a.blockIndex.localeCompare(b.blockIndex));
         if (ownLeased.length > 0 && !runningRef.current) {
           setCurrentBlock(ownLeased[0]);
           setCurrentOffsetInBlock(ownLeased[0].progressOffset);
@@ -264,11 +249,10 @@ export default function App() {
       } catch (err) {
         setSessionData(null);
         setSessionError(
-          err instanceof Error
-            ? err.message
-            : locale === 'cs'
-              ? 'Nepodařilo se načíst relaci.'
-              : 'Failed to load session.',
+          extractReadableError(
+            err,
+            locale === 'cs' ? 'Nepodařilo se načíst relaci.' : 'Failed to load session.',
+          ),
         );
         window.history.replaceState(null, '', pathnameForTab('compute', locale));
       } finally {
@@ -290,11 +274,8 @@ export default function App() {
     if (!sessionData) return;
     setIsRefreshingLedger(true);
     try {
-      const res = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionData.session.shareToken)}`,
-      );
-      if (res.ok) {
-        const updated = (await res.json()) as SessionData;
+      const updated = await getSessionSummaryByAddress(sessionData.session.btcAddress);
+      if (updated) {
         setSessionData(updated);
       }
     } finally {
@@ -425,29 +406,18 @@ export default function App() {
   // Keep-alive heartbeat while paused on page so the active block is held indefinitely until user resumes or leaves
   useEffect(() => {
     if (!sessionData || !currentBlock || isRunning) return;
-    const token = sessionData.session.shareToken;
-    const blockId = currentBlock.id;
+    const btcAddress = sessionData.session.btcAddress;
+    const blockIndex = currentBlock.blockIndex;
     let cancelled = false;
 
     const sendHeartbeat = async () => {
       if (cancelled || runningRef.current) return;
       try {
-        const res = await fetch(
-          `/api/sessions/${encodeURIComponent(token)}/blocks/${blockId}/heartbeat`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-device-secret': deviceSecret,
-            },
-            body: JSON.stringify({ deviceId, deviceSecret }),
-          },
-        );
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          active?: boolean;
-          status?: 'leased' | 'completed' | 'reclaimed';
-        };
+        const data = await heartbeatBlockInFirestore({
+          btcAddress,
+          blockIndex,
+          deviceId,
+        });
         if (!cancelled && data.active === false) {
           setCurrentBlock(null);
           setCurrentOffsetInBlock(0);
@@ -481,29 +451,13 @@ export default function App() {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [sessionData, currentBlock, isRunning, deviceId, deviceSecret, refreshSession]);
+  }, [sessionData, currentBlock, isRunning, deviceId, refreshSession]);
 
   const handleCreateSession = async (btcAddress: string) => {
     setIsCreatingSession(true);
     setSessionError(null);
     try {
-      const res = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ btcAddress, locale }),
-      });
-      const data = await safeParseJson<SessionData & { error?: string }>(
-        res,
-        locale === 'cs'
-          ? 'Server vrátil neplatnou odpověď při vytváření relace.'
-          : 'The server returned an invalid response while creating the session.',
-      );
-      if (!res.ok) {
-        throw new Error(
-          data.error ||
-            (locale === 'cs' ? 'Chyba při vytváření relace.' : 'Failed to create session.'),
-        );
-      }
+      const data = await createOrResumeSessionByAddress({ btcAddress, locale });
       setSessionData(data);
       setActiveTab('compute');
       window.history.pushState(
@@ -513,11 +467,10 @@ export default function App() {
       );
     } catch (err) {
       setSessionError(
-        err instanceof Error
-          ? err.message
-          : locale === 'cs'
-            ? 'Nepodařilo se vytvořit relaci.'
-            : 'Failed to create session.',
+        extractReadableError(
+          err,
+          locale === 'cs' ? 'Nepodařilo se vytvořit relaci.' : 'Failed to create session.',
+        ),
       );
     } finally {
       setIsCreatingSession(false);
@@ -532,38 +485,14 @@ export default function App() {
     setIsUpdatingStrategy(true);
     setEngineError(null);
     try {
-      const res = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionData.session.shareToken)}/strategy`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-device-secret': deviceSecret,
-          },
-          body: JSON.stringify({
-            blockMode,
-            startPercent,
-            deviceId,
-            deviceSecret,
-          }),
-        },
-      );
-      const data = await safeParseJson<SessionData & { error?: string }>(
-        res,
-        locale === 'cs'
-          ? 'Server vrátil neplatnou odpověď při ukládání strategie.'
-          : 'The server returned an invalid response while saving block strategy.',
-      );
-      if (!res.ok) {
-        throw new Error(
-          data.error ||
-            (locale === 'cs'
-              ? 'Nepodařilo se uložit strategii bloků.'
-              : 'Failed to save block strategy.'),
-        );
-      }
+      const data = await updateSessionStrategyInFirestore({
+        btcAddress: sessionData.session.btcAddress,
+        blockMode,
+        startPercent,
+        deviceId,
+      });
       setSessionData(data);
-      // Server released all unstarted (0-progress) queued blocks for this device
+      // Unstarted (0-progress) queued blocks for this device were released
       queuedBlocksRef.current = [];
       if (currentBlock && currentOffsetInBlock === 0 && currentBlock.progressOffset === 0) {
         setCurrentBlock(null);
@@ -581,11 +510,10 @@ export default function App() {
       }
     } catch (err) {
       setEngineError(
-        err instanceof Error
-          ? err.message
-          : locale === 'cs'
-            ? 'Chyba při změně strategie.'
-            : 'Error updating block strategy.',
+        extractReadableError(
+          err,
+          locale === 'cs' ? 'Chyba při změně strategie.' : 'Error updating block strategy.',
+        ),
       );
     } finally {
       setIsUpdatingStrategy(false);
@@ -593,41 +521,29 @@ export default function App() {
   };
 
   const flushCheckpoint = async (
-    shareToken: string,
-    blockId: number,
+    btcAddress: string,
+    blockIndex: string,
     offset: number,
     rateKps: number,
   ) => {
     checkpointInFlightRef.current = true;
     const batchOffsets = [...pendingPowOffsetsRef.current].slice(0, 32);
     try {
-      const res = await fetch(
-        `/api/sessions/${encodeURIComponent(shareToken)}/blocks/${blockId}/checkpoint`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-device-secret': deviceSecret,
-          },
-          body: JSON.stringify({
-            deviceId,
-            deviceSecret,
-            progressOffset: offset,
-            rateKps,
-            powOffsets: batchOffsets,
-          }),
-        },
-      );
-      if (res.ok) {
-        for (const off of batchOffsets) {
-          pendingPowOffsetsRef.current.delete(off);
-        }
-        const json = (await res.json().catch(() => null)) as { powCount?: number } | null;
-        if (json && typeof json.powCount === 'number') {
-          setCurrentBlock((prev) =>
-            prev && prev.id === blockId ? { ...prev, powCount: json.powCount! } : prev,
-          );
-        }
+      const json = await checkpointBlockInFirestore({
+        btcAddress,
+        blockIndex,
+        deviceId,
+        progressOffset: offset,
+        rateKps,
+        powOffsets: batchOffsets,
+      });
+      for (const off of batchOffsets) {
+        pendingPowOffsetsRef.current.delete(off);
+      }
+      if (typeof json.powCount === 'number') {
+        setCurrentBlock((prev) =>
+          prev && prev.blockIndex === blockIndex ? { ...prev, powCount: json.powCount } : prev,
+        );
       }
     } catch {
       // non-fatal transient heartbeat
@@ -644,8 +560,8 @@ export default function App() {
     const active = activeBlockRef.current;
     if (active && sessionData) {
       await flushCheckpoint(
-        sessionData.session.shareToken,
-        active.block.id,
+        sessionData.session.btcAddress,
+        active.block.blockIndex,
         active.offset,
         active.rateKps,
       );
@@ -721,6 +637,7 @@ export default function App() {
         dryRun: false,
         locale,
         shareToken: activeSession.session.shareToken,
+        btcAddress: activeSession.session.btcAddress,
         txid: signedTx.txid,
         userSats: signedTx.userSats.toString(),
         adminSats: signedTx.adminSats.toString(),
@@ -734,6 +651,15 @@ export default function App() {
         signedTx,
         broadcastResult,
       });
+      void recordRelaySubmissionInFirestore({
+        btcAddress: activeSession.session.btcAddress,
+        txid: signedTx.txid,
+        userSats: signedTx.userSats.toString(),
+        adminSats: signedTx.adminSats.toString(),
+        feeSats: signedTx.feeSats.toString(),
+        isDryRun: false,
+        summaryText: broadcastResult.receipts.map((r) => `${r.provider}:${r.statusCode}`).join(', ') || 'broadcast',
+      }).catch(() => {});
     }
   };
 
@@ -844,71 +770,29 @@ export default function App() {
     setEngineError(null);
     setIsBusyStarting(true);
 
-    const token = sessionData.session.shareToken;
+    const btcAddress = sessionData.session.btcAddress;
     const RATE_WINDOW_MS = 5000;
 
-    let calibratedMaxKeys = hardware.recommendedDispatchKeys ?? WEBGPU_INITIAL_SLICE;
-    try {
-      const savedMax = parseInt(localStorage.getItem(MAX_CALIBRATION_STORAGE_KEY) ?? '0', 10);
-      if (Number.isFinite(savedMax) && savedMax >= WEBGPU_MIN_SLICE && savedMax <= WEBGPU_MAX_SLICE) {
-        calibratedMaxKeys = savedMax;
-      }
-    } catch {
-      // ignore storage errors
-    }
-
-    let calibratedSmoothKeys = Math.min(calibratedMaxKeys, 2 * WEBGPU_UNIT_SLICE);
-    try {
-      const savedSmooth = parseInt(
-        localStorage.getItem(SMOOTH_CALIBRATION_STORAGE_KEY) ?? '0',
-        10,
-      );
-      if (
-        Number.isFinite(savedSmooth) &&
-        savedSmooth >= WEBGPU_MIN_SLICE &&
-        savedSmooth <= WEBGPU_MAX_SLICE
-      ) {
-        calibratedSmoothKeys = savedSmooth;
-      }
-    } catch {
-      // ignore storage errors
-    }
+    let calibratedMaxKeys =
+      calibratedMaxKeysRef.current ?? hardware.recommendedDispatchKeys ?? WEBGPU_INITIAL_SLICE;
+    let calibratedSmoothKeys =
+      calibratedSmoothKeysRef.current ?? Math.min(calibratedMaxKeys, 2 * WEBGPU_UNIT_SLICE);
 
     const leaseNextBatch = async (): Promise<LeasedBlockPayload> => {
       const measuredRate = lastMeasuredRateRef.current;
-      const res = await fetch(`/api/sessions/${encodeURIComponent(token)}/blocks/lease`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-device-secret': deviceSecret,
-        },
-        body: JSON.stringify({
-          deviceId,
-          deviceSecret,
-          deviceLabel,
-          computeMode: hardware.mode,
-          gpuName: hardware.adapterName,
-          rateKps: measuredRate > 0 ? measuredRate : undefined,
-        }),
+      const leasedList = await leaseBlockBatchInFirestore({
+        btcAddress,
+        deviceId,
+        deviceLabel,
+        computeMode: hardware.mode,
+        gpuName: hardware.adapterName,
+        rateKps: measuredRate > 0 ? measuredRate : undefined,
       });
-      const payload = await safeParseJson<Partial<LeaseBlocksResponse> & { error?: string }>(
-        res,
-        locale === 'cs'
-          ? 'Server vrátil neplatnou odpověď při přidělování bloku.'
-          : 'The server returned an invalid response while leasing a block.',
-      );
-      const leasedList =
-        payload.blocks && payload.blocks.length > 0
-          ? payload.blocks
-          : payload.block
-            ? [payload.block]
-            : [];
-      if (!res.ok || leasedList.length === 0) {
+      if (leasedList.length === 0) {
         throw new Error(
-          payload.error ||
-            (locale === 'cs'
-              ? 'Nepodařilo se přidělit unikátní blok ze serveru.'
-              : 'Failed to lease a unique keyspace block from the server.'),
+          locale === 'cs'
+            ? 'Nepodařilo se přidělit unikátní blok z databáze.'
+            : 'Failed to lease a unique keyspace block from the database.',
         );
       }
 
@@ -925,38 +809,14 @@ export default function App() {
     ): Promise<LeasedBlockPayload> => {
       const finalOffsets = [...pendingPowOffsetsRef.current].slice(0, 32);
       const measuredRate = activeBlockRef.current?.rateKps ?? lastMeasuredRateRef.current;
-      saveMeasuredRateKps(measuredRate);
 
-      const completeRes = await fetch(
-        `/api/sessions/${encodeURIComponent(token)}/blocks/${completedBlock.id}/complete`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-device-secret': deviceSecret,
-          },
-          body: JSON.stringify({
-            deviceId,
-            deviceSecret,
-            rateKps: measuredRate,
-            powOffsets: finalOffsets,
-          }),
-        },
-      );
-      const completePayload = await safeParseJson<{ ok?: boolean; summary?: SessionData; error?: string }>(
-        completeRes,
-        locale === 'cs'
-          ? 'Server vrátil neplatnou odpověď při dokončování bloku.'
-          : 'The server returned an invalid response while completing a block.',
-      );
-      if (!completeRes.ok) {
-        throw new Error(
-          completePayload.error ||
-            (locale === 'cs'
-              ? 'Dokončení bloku bylo odmítnuto serverem.'
-              : 'Block completion was rejected by the server.'),
-        );
-      }
+      const updatedSummary = await completeBlockInFirestore({
+        btcAddress,
+        blockIndex: completedBlock.blockIndex,
+        deviceId,
+        rateKps: measuredRate,
+        powOffsets: finalOffsets,
+      });
       pendingPowOffsetsRef.current.clear();
 
       // Advance immediately to pre-leased contiguous batch block with zero network stall
@@ -981,8 +841,8 @@ export default function App() {
         offset: nextBlock.progressOffset,
         rateKps: measuredRate,
       };
-      if (completePayload.summary) {
-        setSessionData(completePayload.summary);
+      if (updatedSummary) {
+        setSessionData(updatedSummary);
       } else {
         void refreshSession();
       }
@@ -1059,8 +919,7 @@ export default function App() {
 
         if (t1 - lastCheckpointAt >= 2500 && !checkpointInFlightRef.current) {
           lastCheckpointAt = t1;
-          saveMeasuredRateKps(currentRate);
-          void flushCheckpoint(token, block.id, offset, currentRate);
+          void flushCheckpoint(btcAddress, block.blockIndex, offset, currentRate);
         }
 
         const shouldReportUi =
@@ -1201,18 +1060,10 @@ export default function App() {
             if (nextCalibrated !== prevCalibrated) {
               if (postProfile === 'smooth') {
                 calibratedSmoothKeys = nextCalibrated;
+                calibratedSmoothKeysRef.current = nextCalibrated;
               } else {
                 calibratedMaxKeys = nextCalibrated;
-              }
-              try {
-                localStorage.setItem(
-                  postProfile === 'smooth'
-                    ? SMOOTH_CALIBRATION_STORAGE_KEY
-                    : MAX_CALIBRATION_STORAGE_KEY,
-                  String(nextCalibrated),
-                );
-              } catch {
-                // ignore storage errors
+                calibratedMaxKeysRef.current = nextCalibrated;
               }
             }
 
@@ -1239,18 +1090,10 @@ export default function App() {
             );
             if (errProfile === 'smooth') {
               calibratedSmoothKeys = shrunk;
+              calibratedSmoothKeysRef.current = shrunk;
             } else {
               calibratedMaxKeys = shrunk;
-            }
-            try {
-              localStorage.setItem(
-                errProfile === 'smooth'
-                  ? SMOOTH_CALIBRATION_STORAGE_KEY
-                  : MAX_CALIBRATION_STORAGE_KEY,
-                String(shrunk),
-              );
-            } catch {
-              // ignore storage errors
+              calibratedMaxKeysRef.current = shrunk;
             }
             if (consecutiveLosses > 4) {
               throw err;
@@ -1322,11 +1165,10 @@ export default function App() {
       setIsRunning(false);
       setIsBusyStarting(false);
       setEngineError(
-        err instanceof Error
-          ? err.message
-          : locale === 'cs'
-            ? 'Chyba výpočetní smyčky.'
-            : 'Compute loop error.',
+        extractReadableError(
+          err,
+          locale === 'cs' ? 'Chyba výpočetní smyčky.' : 'Compute loop error.',
+        ),
       );
     }
   };
