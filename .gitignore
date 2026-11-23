@@ -32,7 +32,7 @@ server.js
 firebase-adminsdk-*.json
 
 # Lokální databáze (SQLite)
-data/
+/data/
 *.db
 *.db-*
 *.sqlite

@@ -1,13 +1,54 @@
-# Bitcoin Puzzle #71 — Browser WebGPU Solver & #1–#160 Key Directory
+# Bitcoin Puzzle #71 — Zero-Install Browser WebGPU Solver & #1–#160 Key Directory
 
-> **Educational & Cryptographic Research Project** — Parallel in-browser **WebGPU** key-space explorer for **Bitcoin Puzzle #71**, featuring non-overlapping multi-device `2²⁹` block coordination, local browser `85% / 15%` payout signing, private mining-pool submission (RBF front-running protection), and a cryptographically verified **Bitcoin Puzzle #1–#160** directory & ETA calculator.
+> **Educational & Cryptographic Research Project** — Run a high-speed **WebGPU** `secp256k1 + Hash160` key-space explorer for **Bitcoin Puzzle #71 (7.10 BTC)** directly in your browser with **zero installation**. Works on **Windows, Linux, macOS, iPhone, and Android**, featuring non-overlapping multi-device `2²⁹` block coordination, local browser `85% / 15%` payout signing, private mining-pool submission (RBF front-running protection), and a cryptographically verified **Bitcoin Puzzle #1–#160** directory & ETA calculator.
 
 ### Live Web App
 
-Try it directly in your browser with zero installation:
+Open the website and start scanning in seconds — **nothing to download, compile, or install**:
 **[https://btc-puzzle71.ai.studio/](https://btc-puzzle71.ai.studio/)**
 
-*(Bilingual UI: English default `/` and Czech `/cs` switcher built in.)*
+*(Bilingual UI: English default `/` and Czech `/cs` switcher built in. Zero browser cookies or localStorage tracking.)*
+
+---
+
+## Why Use Browser WebGPU Instead of Complicated CLI Setups?
+
+- **Zero Installation — Just Open & Compute:** No CUDA toolkit downloads, no Visual Studio build tools, no Python dependencies, and no terminal scripts. Simply open the web page, enter your public Bitcoin payout address, and click **Start**.
+- **True Cross-Platform Support (Desktop & Mobile):**
+  - **Windows** (Chrome / Edge WebGPU & multi-core CPU fallback)
+  - **Linux** (Chrome / Chromium Vulkan WebGPU & CPU WebWorkers)
+  - **macOS** (Safari / Chrome on Apple Silicon M1–M4 & Intel Macs)
+  - **Smartphones & Tablets** (**iPhone / iOS** & **Android** — pool your phone, laptop, and desktop together!)
+- **Multi-Device Solo Link & QR Code:** Every public Bitcoin address gets a unique shareable session URL so all of your PCs, laptops, and phones scan **non-overlapping `2²⁹` blocks** without repeating work.
+- **Max & Smooth Compute Profiles:** Run at **Max** for full dual-queue GPU/CPU throughput, or switch to **Smooth** (when paused) to keep scrolling and everyday browser tasks responsive with only a few percent speed difference.
+
+---
+
+## Approximate Hardware Performance Reference (`MKeys/s`)
+
+> **Important Performance Disclaimer (Not Guaranteed):**
+> All figures below are **rough real-world and community reference estimates — NOT guaranteed throughput**. Actual `MKeys/s` on your machine can differ significantly depending on WebGPU browser implementation (Chrome/Edge Dawn DX12/Vulkan vs. Safari Metal vs. bare-metal CUDA), GPU drivers, exact chip variant (desktop vs. laptop power limits), thermal throttling, OS background load, and `Max` vs. `Smooth` mode. Use the live app's built-in **self-test** and **ETA calculator** to measure your exact device rate.
+
+### Measured Browser WebGPU Examples (Apple Silicon & Mobile)
+
+| Device / Chip | Execution Mode | Approximate Speed | Notes |
+| --- | --- | --- | --- |
+| **Apple iPhone** *(depends on model)* | Browser WebGPU | **~6 MKeys/s** | Varies by SoC generation (A-series GPU cores), iOS version, and thermal state |
+| **Apple MacBook (M4 chip)** | Browser WebGPU | **~56 MKeys/s** | Varies across base M4 / M4 Pro / M4 Max core counts and power mode |
+
+### Popular NVIDIA GeForce RTX Cards (Community Reference in Similar Tools)
+
+The table below shows approximate throughput reported across community benchmarks for popular **NVIDIA RTX** GPUs in native CUDA `secp256k1 + Hash160` key-search tools (such as *BitCrack*, *VanitySearch* forks, and *KeyHunt* variants). **Browser WebGPU throughput on the same GPU is typically lower than dedicated native CUDA binaries** due to browser sandbox, shader translation (WGSL → DXIL/SPIR-V), and OS compositor overhead:
+
+| NVIDIA GPU Model | Typical Native CUDA Reference (*BitCrack / VanitySearch* class) | Notes |
+| --- | --- | --- |
+| **GeForce RTX 3060** | **~350 – 600 MKeys/s** | Entry Ampere desktop/laptop tier; depends heavily on kernel optimization |
+| **GeForce RTX 3070** | **~900 – 1,050 MKeys/s** | Mid-range Ampere GPU benchmarks in compressed Hash160 scans |
+| **GeForce RTX 3080** | **~1,100 – 1,600 MKeys/s** | High-end Ampere GPU; varies by memory/power limits and batch inversion |
+| **GeForce RTX 3090** | **~2,500+ MKeys/s** | Flagship Ampere card (`~2.5 GKeys/s` in optimized CUDA solvers) |
+| **GeForce RTX 4070** | **~2,100+ MKeys/s** | Ada Lovelace efficiency closely rivals older flagship tier |
+| **GeForce RTX 4090** | **~2,600 – 5,900+ MKeys/s** | Top Ada Lovelace consumer GPU (`2.6–5.9+ GKeys/s` depending on kernel) |
+| **GeForce RTX 5090** | **~8,000+ MKeys/s** | Blackwell flagship (`8+ GKeys/s` reported in top community puzzle pools) |
 
 ---
 
@@ -123,6 +164,21 @@ server.ts           Express + Vite server, API endpoints, bilingual sitemap.xml 
 
 ---
 
+## Frequently Searched Questions (Bitcoin Puzzle #71 & WebGPU)
+
+- **Can I really search Bitcoin Puzzle #71 keys without installing software?**
+  Yes. Modern browsers expose GPU compute shaders through the **WebGPU API**. This app compiles a custom `secp256k1 + SHA-256 + RIPEMD-160` WGSL compute pipeline straight inside your tab on Windows, Linux, macOS, iOS, or Android—and automatically uses multi-threaded CPU WebWorkers if WebGPU is unavailable.
+- **How does this compare to BitCrack, KeyHunt, or RCKangaroo?**
+  - **BitCrack / KeyHunt:** Native CUDA/C++ CLI tools best suited for dedicated bare-metal GPU rigs targeting Hash160 puzzles (`#71–#74`).
+  - **RCKangaroo / Pollard's Kangaroo:** `O(√N)` solvers designed for puzzles with **exposed public keys** on-chain (`#140, #145, #150, #155, #160` — **cannot** be used on Puzzle `#71` until an outgoing spend reveals its public key).
+  - **Puzzle71 WebGPU (this project):** Instant zero-install web app combining multi-device block coordination, public solo leaderboard, verified `#1–#160` dataset, and private pool RBF-safe transaction signing.
+- **Does anything get saved in browser cookies or localStorage?**
+  No. The app operates with zero `localStorage`, `sessionStorage`, `cookies`, or `IndexedDB` persistence—your persistent progress lives purely under your shareable address/session link.
+
+---
+
 ## License & Responsibility
 
 Provided for **educational and research use only**, **"AS-IS"** without warranty of any kind. Users bear sole responsibility for compliance with local laws, hardware safety, electricity usage, and Bitcoin address accuracy.
+
+*Topics: `bitcoin-puzzle-71` · `bitcoin-puzzle-160` · `webgpu` · `wgsl` · `secp256k1` · `hash160` · `cryptography` · `zero-install` · `bitcrack-alternative` · `mara-slipstream` · `rebar-shield` · `rbf-protection`*
