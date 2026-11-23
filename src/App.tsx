@@ -1280,6 +1280,26 @@ export default function App() {
             currentDeviceId={deviceId}
             onRefresh={refreshSession}
             isRefreshing={isRefreshingLedger}
+            isRunning={isRunning}
+            isUpdatingStrategy={isUpdatingStrategy}
+            liveActiveBlock={
+              currentBlock
+                ? {
+                    blockIndex: currentBlock.blockIndex,
+                    currentOffset: currentOffsetInBlock,
+                    persistedOffset:
+                      sessionData.recentBlocks.find((b) => b.blockIndex === currentBlock.blockIndex)
+                        ?.progressOffset ?? currentBlock.progressOffset,
+                  }
+                : null
+            }
+            onSelectSequentialSector={async (startPercent) => {
+              await handleUpdateStrategy('sequential', startPercent);
+            }}
+            onNavigateToCompute={() => {
+              selectTabWithRoute('compute');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
           />
         ) : (
           <ComputeConsole

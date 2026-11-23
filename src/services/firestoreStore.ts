@@ -34,7 +34,12 @@ import type {
   PublicLeaderboardEntry,
   PublicLeaderboardResponse,
   SessionData,
+  SessionSectorSummary,
 } from '../types/api.ts';
+import {
+  aggregateBlocksToSectorSummaries,
+  blockIndexToSectorIndex,
+} from '../utils/keyspaceSectors.ts';
 import { calculateKeyspaceProgressPercent } from '../utils/keyspaceStats.ts';
 
 const MAX_ACTIVE_LEASES_PER_SESSION = 32;
@@ -89,6 +94,13 @@ interface FirestoreLeaderboardDoc {
   completedBlocksCount: number;
   activeBlocksCount: number;
   lastActivityAt: Timestamp | null;
+}
+
+interface FirestoreSectorDoc {
+  sectorIndex: string;
+  scannedKeys: number;
+  completedBlocksCount: number;
+  updatedAt: Timestamp | null;
 }
 
 function timestampToMs(ts: Timestamp | number | null | undefined, fallback = Date.now()): number {
@@ -195,6 +207,9 @@ export async function getSessionSummaryByAddress(btcAddress: string): Promise<Se
     const recentSnap = await getDocs(
       query(collection(db, 'sessions', btcAddress, 'blocks'), orderBy('leasedAt', 'desc'), limit(40)),
     );
+    const sectorsSnap = await getDocs(
+      query(collection(db, 'sessions', btcAddress, 'sectors'), where('scannedKeys', '>=', 0), limit(100)),
+    );
 
     const blockMap = new Map<string, LeasedBlockPayload>();
     for (const d of leasedSnap.docs) {
@@ -214,6 +229,39 @@ export async function getSessionSummaryByAddress(btcAddress: string): Promise<Se
         return b.leasedAt - a.leasedAt;
       })
       .slice(0, 40);
+
+    let sectors: SessionSectorSummary[] = sectorsSnap.docs
+      .map((d) => {
+        const sec = d.data() as FirestoreSectorDoc;
+        const parsedIdx = Number(sec.sectorIndex);
+        return {
+          sectorIndex: Number.isInteger(parsedIdx) ? parsedIdx : -1,
+          scannedKeys: Number(sec.scannedKeys || 0),
+          completedBlocksCount: Number(sec.completedBlocksCount || 0),
+          updatedAt: timestampToMs(sec.updatedAt),
+        };
+      })
+      .filter((sec) => sec.sectorIndex >= 0 && sec.sectorIndex < 100)
+      .sort((a, b) => a.sectorIndex - b.sectorIndex);
+
+    // Seamless fallback for pre-upgrade sessions that have scanned blocks before /sectors existed
+    if (sectors.length === 0 && Number(s.totalKeysChecked || 0) > 0) {
+      if (recentSnap.docs.length < 40) {
+        sectors = aggregateBlocksToSectorSummaries([...blockMap.values()]);
+      } else {
+        const legacyBlocksSnap = await getDocs(
+          query(collection(db, 'sessions', btcAddress, 'blocks'), limit(500)),
+        );
+        const legacyMap = new Map<string, LeasedBlockPayload>(blockMap);
+        for (const d of legacyBlocksSnap.docs) {
+          const payload = mapBlockDocToPayload(d.data() as FirestoreBlockDoc);
+          if (!legacyMap.has(payload.blockIndex)) {
+            legacyMap.set(payload.blockIndex, payload);
+          }
+        }
+        sectors = aggregateBlocksToSectorSummaries([...legacyMap.values()]);
+      }
+    }
 
     let seqCursorBig = 0n;
     try {
@@ -257,6 +305,7 @@ export async function getSessionSummaryByAddress(btcAddress: string): Promise<Se
         };
       }),
       recentBlocks,
+      sectors,
     };
   } catch (err) {
     handleFirestoreError(err, OperationType.GET, sessionPath);
@@ -729,16 +778,19 @@ export async function checkpointBlockInFirestore(params: {
     const addressHash = await sha256Hex(params.btcAddress);
     const maskedAddress = maskBtcAddress(params.btcAddress);
 
+    const sectorIdx = blockIndexToSectorIndex(params.blockIndex);
     const sessionRef = doc(db, 'sessions', params.btcAddress);
     const blockRef = doc(db, 'sessions', params.btcAddress, 'blocks', params.blockIndex);
     const deviceRef = doc(db, 'sessions', params.btcAddress, 'devices', params.deviceId);
+    const sectorRef = doc(db, 'sessions', params.btcAddress, 'sectors', String(sectorIdx));
     const leaderboardRef = doc(db, 'leaderboard', addressHash);
 
     return await runTransaction(db, async (tx) => {
-      const [sessionSnap, blockSnap, deviceSnap, lbSnap] = await Promise.all([
+      const [sessionSnap, blockSnap, deviceSnap, sectorSnap, lbSnap] = await Promise.all([
         tx.get(sessionRef),
         tx.get(blockRef),
         tx.get(deviceRef),
+        tx.get(sectorRef),
         tx.get(leaderboardRef),
       ]);
 
@@ -778,6 +830,24 @@ export async function checkpointBlockInFirestore(params: {
         powCount: mergedOffsets.length,
         heartbeatAt: serverTimestamp(),
       });
+
+      const prevSector = sectorSnap.exists() ? (sectorSnap.data() as FirestoreSectorDoc) : null;
+      if (deltaKeys > 0 || (prevSector === null && clampedOffset > 0)) {
+        if (prevSector) {
+          tx.update(sectorRef, {
+            scannedKeys: Number(prevSector.scannedKeys || 0) + deltaKeys,
+            completedBlocksCount: Number(prevSector.completedBlocksCount || 0),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          tx.set(sectorRef, {
+            sectorIndex: String(sectorIdx),
+            scannedKeys: Math.min(Number(BLOCK_SIZE), clampedOffset),
+            completedBlocksCount: 0,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
 
       const safeRate = Number.isFinite(params.rateKps) && params.rateKps >= 0 ? params.rateKps : 0;
       if (deviceSnap.exists()) {
@@ -840,16 +910,19 @@ export async function completeBlockInFirestore(params: {
     const addressHash = await sha256Hex(params.btcAddress);
     const maskedAddress = maskBtcAddress(params.btcAddress);
 
+    const sectorIdx = blockIndexToSectorIndex(params.blockIndex);
     const sessionRef = doc(db, 'sessions', params.btcAddress);
     const blockRef = doc(db, 'sessions', params.btcAddress, 'blocks', params.blockIndex);
     const deviceRef = doc(db, 'sessions', params.btcAddress, 'devices', params.deviceId);
+    const sectorRef = doc(db, 'sessions', params.btcAddress, 'sectors', String(sectorIdx));
     const leaderboardRef = doc(db, 'leaderboard', addressHash);
 
     await runTransaction(db, async (tx) => {
-      const [sessionSnap, blockSnap, deviceSnap, lbSnap] = await Promise.all([
+      const [sessionSnap, blockSnap, deviceSnap, sectorSnap, lbSnap] = await Promise.all([
         tx.get(sessionRef),
         tx.get(blockRef),
         tx.get(deviceRef),
+        tx.get(sectorRef),
         tx.get(leaderboardRef),
       ]);
 
@@ -890,6 +963,22 @@ export async function completeBlockInFirestore(params: {
         heartbeatAt: serverTimestamp(),
         completedAt: serverTimestamp(),
       });
+
+      const prevSector = sectorSnap.exists() ? (sectorSnap.data() as FirestoreSectorDoc) : null;
+      if (prevSector) {
+        tx.update(sectorRef, {
+          scannedKeys: Number(prevSector.scannedKeys || 0) + remainingKeys,
+          completedBlocksCount: Number(prevSector.completedBlocksCount || 0) + 1,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        tx.set(sectorRef, {
+          sectorIndex: String(sectorIdx),
+          scannedKeys: Math.min(Number(BLOCK_SIZE), b.totalKeys),
+          completedBlocksCount: 1,
+          updatedAt: serverTimestamp(),
+        });
+      }
 
       const safeRate = Number.isFinite(params.rateKps) && params.rateKps >= 0 ? params.rateKps : 0;
       if (deviceSnap.exists()) {

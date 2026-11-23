@@ -21,3 +21,5 @@
 10. **Fake Block Completion Without PoW**: `UPDATE /sessions/{btcAddress}/blocks/10` setting `status: 'completed'` with `powCount: 2` (`< 6`) -> denied.
 11. **Post-Completion Tampering**: `UPDATE /sessions/{btcAddress}/blocks/10` on an already `completed` block -> denied (`existing().status == 'leased'` fails).
 12. **Leaderboard Full-Address or Counter Reset**: `CREATE /leaderboard/1PWo3JeB9jrGwfHDNpdGK54CRas7fsVzXU` (non-SHA256 ID) or `UPDATE` decreasing `totalKeysChecked` -> denied.
+13. **Sector Coverage Poisoning**: `CREATE /sessions/{btcAddress}/sectors/100` (out-of-range index) or `UPDATE` decreasing `scannedKeys` -> denied.
+

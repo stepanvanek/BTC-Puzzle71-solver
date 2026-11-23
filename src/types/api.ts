@@ -41,6 +41,14 @@ export interface SessionData {
     leasedAt: number;
     completedAt: number | null;
   }>;
+  sectors?: SessionSectorSummary[];
+}
+
+export interface SessionSectorSummary {
+  sectorIndex: number;
+  scannedKeys: number;
+  completedBlocksCount: number;
+  updatedAt: number;
 }
 
 export interface LeasedBlockPayload {

@@ -39,6 +39,20 @@ service cloud.firestore {
       return val is string && val.size() >= 3 && val.size() <= 66 && val.matches('^0x[0-9a-f]{1,64}$');
     }
 
+    function isValidSectorIndex(val) {
+      return val is string && val.size() >= 1 && val.size() <= 2 && val.matches('^([0-9]|[1-9][0-9])$');
+    }
+
+    function isValidSectorDoc(data, sectorId) {
+      return data.keys().hasAll(['sectorIndex', 'scannedKeys', 'completedBlocksCount', 'updatedAt']) &&
+        data.keys().hasOnly(['sectorIndex', 'scannedKeys', 'completedBlocksCount', 'updatedAt']) &&
+        data.sectorIndex == sectorId &&
+        isValidSectorIndex(data.sectorIndex) &&
+        data.scannedKeys is int && data.scannedKeys >= 0 &&
+        data.completedBlocksCount is int && data.completedBlocksCount >= 0 &&
+        data.updatedAt is timestamp;
+    }
+
     function isValidSessionDoc(data, docAddr) {
       return data.keys().hasAll([
           'btcAddress',
@@ -374,6 +388,38 @@ service cloud.firestore {
           isValidNumericId(blockIndex) &&
           existing().status == 'leased' &&
           existing().progressOffset == 0;
+      }
+
+      // Cumulative per-1% Puzzle #71 keyspace sector coverage (0..99)
+      match /sectors/{sectorIndex} {
+        allow get: if isValidBtcAddress(btcAddress) && isValidSectorIndex(sectorIndex);
+        allow list: if isValidBtcAddress(btcAddress) &&
+          resource.data.scannedKeys >= 0 &&
+          request.query.limit != null &&
+          request.query.limit <= 100;
+        allow create: if isValidBtcAddress(btcAddress) &&
+          isValidSectorIndex(sectorIndex) &&
+          isValidSectorDoc(incoming(), sectorIndex) &&
+          exists(/databases/$(database)/documents/sessions/$(btcAddress)) &&
+          incoming().scannedKeys <= 536870912 &&
+          incoming().completedBlocksCount <= 1 &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidBtcAddress(btcAddress) &&
+          isValidSectorIndex(sectorIndex) &&
+          isValidSectorDoc(incoming(), sectorIndex) &&
+          exists(/databases/$(database)/documents/sessions/$(btcAddress)) &&
+          incoming().sectorIndex == existing().sectorIndex &&
+          incoming().scannedKeys >= existing().scannedKeys &&
+          incoming().scannedKeys - existing().scannedKeys <= 536870912 &&
+          incoming().completedBlocksCount >= existing().completedBlocksCount &&
+          incoming().completedBlocksCount - existing().completedBlocksCount <= 1 &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'scannedKeys',
+            'completedBlocksCount',
+            'updatedAt'
+          ]);
+        allow delete: if false;
       }
 
       // Immutable relay broadcast audit logs

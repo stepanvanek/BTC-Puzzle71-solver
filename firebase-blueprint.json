@@ -338,6 +338,34 @@
         "summaryText",
         "createdAt"
       ]
+    },
+    "SessionSector": {
+      "title": "SessionSector",
+      "description": "Persistent cumulative progress counter for one of the 100 equal 1% sectors (0..99) of Puzzle #71 keyspace.",
+      "type": "object",
+      "properties": {
+        "sectorIndex": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "pattern": "^([0-9]|[1-9][0-9])$",
+          "description": "Zero-based 1% sector index (0 to 99, matches document ID)."
+        },
+        "scannedKeys": {
+          "type": "integer",
+          "description": "Monotonic cumulative count of scanned keys falling within this 1% sector."
+        },
+        "completedBlocksCount": {
+          "type": "integer",
+          "description": "Monotonic count of PoW-verified completed 2^29 blocks within this 1% sector."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last update to this sector."
+        }
+      },
+      "required": ["sectorIndex", "scannedKeys", "completedBlocksCount", "updatedAt"]
     }
   },
   "firestore": {
@@ -356,6 +384,10 @@
     "/sessions/{btcAddress}/blocks/{blockIndex}": {
       "schema": { "$ref": "#/entities/SearchedBlock" },
       "description": "Unique 2^29 keyspace blocks for an address session."
+    },
+    "/sessions/{btcAddress}/sectors/{sectorIndex}": {
+      "schema": { "$ref": "#/entities/SessionSector" },
+      "description": "Cumulative per-1% Puzzle #71 keyspace sector coverage (0..99) for an address session."
     },
     "/sessions/{btcAddress}/relay_submissions/{txid}": {
       "schema": { "$ref": "#/entities/RelayAuditLog" },

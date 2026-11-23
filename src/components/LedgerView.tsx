@@ -2,13 +2,20 @@ import { RefreshCw } from 'lucide-react';
 import { useLocale } from '../i18n/LocaleContext.tsx';
 import { formatLocalizedDecimal, formatLocalizedNumber } from '../i18n/locale.ts';
 import type { SessionData } from '../types/api.ts';
+import type { LiveActiveBlockOverlay } from '../utils/keyspaceSectors.ts';
 import { formatKeyspaceProgressPercent } from '../utils/keyspaceStats.ts';
+import { KeyspaceSectorMap } from './KeyspaceSectorMap.tsx';
 
 interface LedgerViewProps {
   sessionData: SessionData;
   currentDeviceId: string;
   onRefresh: () => Promise<void>;
   isRefreshing: boolean;
+  isRunning?: boolean;
+  isUpdatingStrategy?: boolean;
+  liveActiveBlock?: LiveActiveBlockOverlay | null;
+  onSelectSequentialSector?: (startPercent: number) => Promise<void>;
+  onNavigateToCompute?: () => void;
 }
 
 function formatTime(ts: number, isCs: boolean): string {
@@ -24,6 +31,11 @@ export function LedgerView({
   currentDeviceId,
   onRefresh,
   isRefreshing,
+  isRunning = false,
+  isUpdatingStrategy = false,
+  liveActiveBlock = null,
+  onSelectSequentialSector,
+  onNavigateToCompute,
 }: LedgerViewProps) {
   const { locale } = useLocale();
   const isCs = locale === 'cs';
@@ -141,6 +153,15 @@ export function LedgerView({
           </div>
         )}
       </section>
+
+      <KeyspaceSectorMap
+        sessionData={sessionData}
+        liveActiveBlock={liveActiveBlock}
+        isRunning={isRunning}
+        isUpdatingStrategy={isUpdatingStrategy}
+        onSelectSequentialSector={onSelectSequentialSector}
+        onNavigateToCompute={onNavigateToCompute}
+      />
 
       {/* Non-overlapping Blocks Ledger */}
       <section className="rounded-xl border border-[#222938] bg-[#11151E] overflow-hidden">

@@ -19,9 +19,10 @@ test('firestore.rules enforces global deny-all and covers every blueprint collec
   assert.match(rulesText, /match \/share_tokens\/\{shareToken\}/);
   assert.match(rulesText, /match \/devices\/\{deviceId\}/);
   assert.match(rulesText, /match \/blocks\/\{blockIndex\}/);
+  assert.match(rulesText, /match \/sectors\/\{sectorIndex\}/);
   assert.match(rulesText, /match \/relay_submissions\/\{txid\}/);
   assert.match(rulesText, /match \/leaderboard\/\{addressHash\}/);
-  assert.ok(Object.keys(blueprint.firestore).length === 6);
+  assert.ok(Object.keys(blueprint.firestore).length === 7);
 });
 
 test('Dirty Dozen security invariants are enforced by firestore.rules', () => {
