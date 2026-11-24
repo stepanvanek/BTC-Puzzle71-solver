@@ -11,6 +11,36 @@ Open the website and start scanning in seconds — **nothing to download, compil
 
 ---
 
+## Screenshots & Visual Tour
+
+### 1. Live Scanning Console (`Compute`)
+![Bitcoin Puzzle #71 Browser Compute Console](docs/screenshots/compute-console.png)
+
+**What it shows:** The main real-time solver console running directly in the browser with zero installation. It displays the active payout address (`P2PKH`, `P2SH`, `Bech32`, or `Taproot`), your shareable multi-device URL & QR code, `Max` / `Smooth` execution profiles, **Random** vs. **Sequential** block allocation, the currently leased `2²⁹` keyspace block (`536,870,912` keys), currently tested hexadecimal private key, verified Proof-of-Work shares, live hashrate, full-space ETA, and the per-device throughput chart.
+
+---
+
+### 2. Visual Keyspace Coverage Map (`100 Sectors · 1% Each`) — Private to Your Session
+![100-Sector Keyspace Coverage Map and Sequential Start Picker](docs/screenshots/keyspace-coverage-map.png)
+
+**What makes it unique:** Most key-search tools give you only a raw text counter and never show *where* in the `2⁷⁰` range your machines have actually been. Only visible to holders of your private session URL, the **Keyspace Coverage Map** divides the entire Puzzle `#71` space into a **10 × 10 grid of 100 sectors (`1%` each)**:
+- **Green:** `100%` completed sector.
+- **Orange (with fill bar & progress indicator):** Partially scanned sector.
+- **Dark slate:** Completely unscanned sector.
+
+Click any square to inspect its exact **hexadecimal key bounds**, **block range**, **scanned key count**, and **completion percentage** — and click **`Start Sequential at X%`** to jump sequential scanning straight to any sector you choose.
+
+---
+
+### 3. Simultaneous Multi-Device Coordination (Same URL, Zero Duplicate Work)
+![Multiple Devices Connected to One Session URL](docs/screenshots/multi-device-coordination.png)
+
+![Non-Overlapping Leased Keyspace Blocks](docs/screenshots/non-overlapping-blocks.png)
+
+**What makes it unique:** Open your personal session URL (or scan the QR code) on your **desktop GPU, laptop, and smartphone** at the same time — in the example above, `Desktop · Chrome` and `Mobile · Safari` compute simultaneously under the same address. The server tracks every device's live hashrate, key count, and online heartbeat while leasing **strictly non-overlapping `2²⁹` keyspace blocks** (`#582110816374` vs. `#221076596001` above). **It is guaranteed that two connected devices — or two runs on your own machines — will never waste compute scanning the same keyspace range more than once.**
+
+---
+
 ## Why Use Browser WebGPU Instead of Complicated CLI Setups?
 
 - **Zero Installation — Just Open & Compute:** No CUDA toolkit downloads, no Visual Studio build tools, no Python dependencies, and no terminal scripts. Simply open the web page, enter your public Bitcoin payout address, and click **Start**.
@@ -149,6 +179,8 @@ No environment variables or API keys are required to run the app. All optional o
 ## Project Structure
 
 ```text
+docs/
+  screenshots/      English UI screenshots embedded in README.md
 src/
   components/       UI views (Onboarding, ComputeConsole, PuzzleDirectorySection, LeaderboardSection, RelayInspector, HowItWorks, LegalTerms)
   data/             Verified Bitcoin Puzzle #1–#160 dataset & timeline
@@ -159,7 +191,8 @@ src/
 server/
   db.ts             SQLite session, device, block-lease, and PoW verification store
   privateRelay.ts   Mempool.space / Blockstream UTXO lookup & private mining-pool relay
-server.ts           Express + Vite server, API endpoints, bilingual sitemap.xml & robots.txt
+  routes.ts         Express API routes, bilingual sitemap.xml & robots.txt
+server.ts           Express + Vite server entrypoint
 ```
 
 ---
